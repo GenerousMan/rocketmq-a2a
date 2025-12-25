@@ -51,8 +51,8 @@ public class HttpSupervisorAgent {
     
     private static final Logger log = LoggerFactory.getLogger(HttpSupervisorAgent.class);
     
-    private static final String WEATHER_AGENT_URL = System.getProperty("weatherAgentUrl", "http://localhost:8080");
-    private static final String TRAVEL_AGENT_URL = System.getProperty("travelAgentUrl", "http://localhost:8888");
+    private static final String WEATHER_AGENT_URL = System.getProperty("weatherAgentUrl", "http://localhost:9080");
+    private static final String TRAVEL_AGENT_URL = System.getProperty("travelAgentUrl", "http://localhost:9888");
     
     private static final AtomicLong REQUEST_COUNT = new AtomicLong(0);
     private static final AtomicLong SUCCESS_COUNT = new AtomicLong(0);

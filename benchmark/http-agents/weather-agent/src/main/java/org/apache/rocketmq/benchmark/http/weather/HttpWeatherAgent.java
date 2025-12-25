@@ -49,7 +49,7 @@ public class HttpWeatherAgent {
     
     private static final Logger log = LoggerFactory.getLogger(HttpWeatherAgent.class);
     
-    private static final int DEFAULT_PORT = 8080;
+    private static final int DEFAULT_PORT = 9080;
     private static final AtomicLong REQUEST_COUNT = new AtomicLong(0);
     private static final AtomicLong SUCCESS_COUNT = new AtomicLong(0);
     private static final AtomicLong FAILURE_COUNT = new AtomicLong(0);

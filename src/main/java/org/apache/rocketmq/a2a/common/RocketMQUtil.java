@@ -198,7 +198,7 @@ public class RocketMQUtil {
             .setClientConfiguration(clientConfiguration)
             .setConsumerGroup(bizGroup)
             .setSubscriptionExpressions(Collections.singletonMap(bizTopic, new FilterExpression(tag, FilterExpressionType.TAG)))
-            .setMessageListener(messageListener).build();
+            .setMessageListener(messageListener).setConsumptionThreadCount(200).build();
     }
 
     public static Message buildMessage(String topic, String liteTopic, RocketMQResponse response) {

@@ -98,7 +98,7 @@ public class RocketMQA2AServerRoutes extends A2AServerRoutes {
     private static final String ACCESS_KEY = System.getProperty("rocketMQAK", "");
     private static final String SECRET_KEY = System.getProperty("rocketMQSK", "");
     private static volatile Runnable streamingMultiSseSupportSubscribedRunnable;
-    private final ThreadPoolExecutor executor = new ThreadPoolExecutor(6, 6, 60, TimeUnit.SECONDS,
+    private final ThreadPoolExecutor executor = new ThreadPoolExecutor(100, 100, 60, TimeUnit.SECONDS,
         new ArrayBlockingQueue<>(10_0000), new CallerRunsPolicy());
     private Producer producer;
     private PushConsumer pushConsumer;
@@ -114,6 +114,7 @@ public class RocketMQA2AServerRoutes extends A2AServerRoutes {
             this.producer = buildProducer(ROCKETMQ_NAMESPACE, ROCKETMQ_ENDPOINT, ACCESS_KEY, SECRET_KEY);
             this.pushConsumer = buildConsumer(ROCKETMQ_ENDPOINT, ROCKETMQ_NAMESPACE, ACCESS_KEY, SECRET_KEY,
                 BIZ_CONSUMER_GROUP, BIZ_TOPIC, buildMessageListener());
+            
             this.multiSseSupport = new MultiSseSupport(this.producer);
             log.info("RocketMQA2AServerRoutes init success");
         } catch (Exception e) {

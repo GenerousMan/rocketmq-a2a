@@ -19,8 +19,6 @@ package agent;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.TimeUnit;
 import com.alibaba.dashscope.app.Application;
 import com.alibaba.dashscope.app.ApplicationParam;
 import com.alibaba.dashscope.app.ApplicationResult;
@@ -65,20 +63,23 @@ public class AgentExecutorProducer {
                     eventQueue.enqueueEvent(task);
                 }
                 TaskUpdater taskUpdater = new TaskUpdater(context, eventQueue);
-                // 使用异步等待，不阻塞当前线程
-                CompletableFuture.delayedExecutor(2, TimeUnit.SECONDS).execute(() -> {
-                    try {
-                        // 直接返回固定文本
-                        String fixedText = "根据您的旅行需求，我为您推荐了合适的旅行方案。建议您选择热门旅游目的地，享受美好的旅程。";
-                        List<Part<?>> parts = List.of(new TextPart(fixedText, null));
-                        taskUpdater.addArtifact(parts);
-                        taskUpdater.complete();
-                        log.info("complete: " + fixedText);
-                    } catch (Exception e) {
-                        taskUpdater.startWork(taskUpdater.newAgentMessage(List.of(new TextPart("Error processing output: " + e.getMessage())), Map.of()));
-                        taskUpdater.fail();
-                    }
-                });
+                // 同步执行，等待2秒后处理
+                try {
+                    Thread.sleep(2000);
+                    // 直接返回固定文本
+                    String fixedText = "根据您的旅行需求，我为您推荐了合适的旅行方案。建议您选择热门旅游目的地，享受美好的旅程。";
+                    List<Part<?>> parts = List.of(new TextPart(fixedText, null));
+                    taskUpdater.addArtifact(parts);
+                    taskUpdater.complete();
+                    log.info("complete: " + fixedText);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    taskUpdater.startWork(taskUpdater.newAgentMessage(List.of(new TextPart("Error processing output: " + e.getMessage())), Map.of()));
+                    taskUpdater.fail();
+                } catch (Exception e) {
+                    taskUpdater.startWork(taskUpdater.newAgentMessage(List.of(new TextPart("Error processing output: " + e.getMessage())), Map.of()));
+                    taskUpdater.fail();
+                }
             }
 
             @Override

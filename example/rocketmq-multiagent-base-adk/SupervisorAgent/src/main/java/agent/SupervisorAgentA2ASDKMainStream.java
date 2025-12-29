@@ -121,12 +121,8 @@ public class SupervisorAgentA2ASDKMainStream {
                 }
                 printSystemInfo("🤔 正在思考...");
                 log.info("用户输入: {}", userInput);
-                Content userMsg = Content.fromParts(Part.fromText(userInput));
-                Flowable<Event> events = runner.runAsync(USER_ID, session.id(), userMsg);
-                events.blockingForEach(event -> {
-                    String content = event.stringifyContent();
-                    dealEventContent(content);
-                });
+                // 使用新的关键词路由方法，不再调用 LLM
+                routeMessageByKeyword(userInput);
             }
         }
     }
@@ -298,42 +294,46 @@ public class SupervisorAgentA2ASDKMainStream {
         if (StringUtils.isEmpty(result)) {
             return;
         }
-        Maybe<Session> sessionMaybe = sessionService.getSession(APP_NAME, USER_ID, sessionId, Optional.empty());
-        Event event = Event.builder()
-            .id(UUID.randomUUID().toString())
-            .invocationId(UUID.randomUUID().toString())
-            .author(APP_NAME)
-            .content(buildContent(result))
-            .build();
-        Session session = sessionMaybe.blockingGet();
-        sessionService.appendEvent(session, event);
-        Content userMsg = Content.fromParts(Part.fromText(result));
-        Flowable<Event> events = runner.runAsync(USER_ID, session.id(), userMsg);
-        events.blockingForEach(eventSub -> {
-            boolean equals = lastQuestion.equals(eventSub.stringifyContent());
-            if (equals) {
-                return;
-            }
-            lastQuestion = eventSub.stringifyContent();
-            String content = lastQuestion;
-            if (!StringUtils.isEmpty(content)) {
-                if (content.startsWith("{")) {
-                    try {
-                        Mission mission = JSON.parseObject(content, Mission.class);
-                        if (null != mission && !StringUtils.isEmpty(mission.getMessageInfo()) && !StringUtils.isEmpty(mission.getAgent())) {
-                            printPrompt(AGENT);
-                            System.out.println("转发到其他的Agent, 等待其他Agent响应，Agent: " + mission.getAgent() + " 问题: " + mission.getMessageInfo());
-                            dealMissionByMessage(mission);
-                        }
-                    } catch (Exception e) {
-                        System.out.println("解析过程出现异常");
-                    }
-                }
-            } else {
-                log.debug("Agent 响应: {}", content);
-            }
-        });
+        // 不再调用 LLM，直接输出 agent 响应结果
+        printPrompt(AGENT);
+        System.out.println(result);
         printPrompt(YOU);
+    }
+
+    /**
+     * 根据关键词路由消息到对应的 agent
+     * 根据输入的"天气"、"行程"关键词决定发送消息到哪个agent
+     * 无记忆功能，忠诚的根据输入进行转发
+     */
+    private static void routeMessageByKeyword(String userInput) {
+        if (StringUtils.isEmpty(userInput)) {
+            printPrompt(AGENT);
+            System.out.println("输入不能为空");
+            return;
+        }
+        
+        String lowerInput = userInput.toLowerCase();
+        String targetAgent = null;
+        String messageInfo = userInput;
+        
+        // 根据关键词决定路由
+        if (lowerInput.contains("天气")) {
+            targetAgent = WEATHER_AGENT_NAME;
+        } else if (lowerInput.contains("行程")) {
+            targetAgent = TRAVEL_AGENT_NAME;
+        }
+        
+        if (targetAgent != null) {
+            // 创建 Mission 并转发
+            Mission mission = new Mission(targetAgent, messageInfo);
+            printPrompt(AGENT);
+            System.out.println(AGENT_NAME + " 转发请求到其他的Agent, 等待其响应，Agent: " + mission.getAgent() + " 问题: " + mission.getMessageInfo());
+            dealMissionByMessage(mission);
+        } else {
+            // 如果关键词不匹配，提示用户
+            printPrompt(AGENT);
+            System.out.println("抱歉，我只能处理与\"天气\"或\"行程\"相关的问题。请重新输入。");
+        }
     }
 
     private static Content buildContent(String content) {

@@ -61,19 +61,15 @@ public class AgentExecutorProducer {
                 }
                 TaskUpdater taskUpdater = new TaskUpdater(context, eventQueue);
                 try {
-                    Flowable<ApplicationResult> applicationResultFlowable = appCallStream(userMessage);
-                    String lastOutput = "";
-                    for (ApplicationResult msg : applicationResultFlowable.blockingIterable()) {
-                        String currentText = msg.getOutput().getText();
-                        if (currentText.length() > lastOutput.length()) {
-                            List<Part<?>> parts = List.of(new TextPart(currentText.substring(lastOutput.length()), null));
-                            taskUpdater.addArtifact(parts);
-                        }
-                        lastOutput = currentText;
-                    }
+                    // 等待固定时间（2秒）
+                    Thread.sleep(2000);
+                    // 直接返回固定文本
+                    String fixedText = "根据您的问题，我为您查询了天气信息。当前天气晴朗，温度适宜。";
+                    List<Part<?>> parts = List.of(new TextPart(fixedText, null));
+                    taskUpdater.addArtifact(parts);
                     taskUpdater.complete();
                 } catch (Exception e) {
-                    taskUpdater.startWork(taskUpdater.newAgentMessage(List.of(new TextPart("Error processing streaming output: " + e.getMessage())), Map.of()));
+                    taskUpdater.startWork(taskUpdater.newAgentMessage(List.of(new TextPart("Error processing output: " + e.getMessage())), Map.of()));
                     taskUpdater.fail();
                 }
             }

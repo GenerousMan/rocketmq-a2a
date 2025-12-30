@@ -78,23 +78,24 @@ public class SupervisorAgentBatchMode {
     private static final String TEST_MESSAGE = System.getProperty("testMessage");
     private static final String QPS_STR = System.getProperty("qps", "1");
     private static final String MAX_TEST_TIME_STR = System.getProperty("maxTestTime"); // 最大测试时间（秒）
+    private static final String TENANT_IDS_STR = System.getProperty("tenantIds", "tenant1"); // 租户ID列表，逗号分隔
     
     private static InMemorySessionService sessionService;
     private static final Map<String, Client> AgentClientMap = new HashMap<>();
-    private static String sessionId;
     private static Runner runner;
+    
+    // 租户信息
+    private static final Map<String, TenantInfo> tenantInfoMap = new ConcurrentHashMap<>();
+    private static final List<String> tenantIdList = new ArrayList<>();
+    private static final AtomicLong tenantRoundRobinIndex = new AtomicLong(0);
     
     // 用于跟踪消息发送时间和任务ID
     private static final Map<String, MessageInfo> messageInfoMap = new ConcurrentHashMap<>();
-    private static final ConcurrentLinkedQueue<String> pendingMessageQueue = new ConcurrentLinkedQueue<>();
+    private static final Map<String, ConcurrentLinkedQueue<String>> tenantPendingMessageQueueMap = new ConcurrentHashMap<>();
+    private static final Map<String, String> taskIdToSessionIdMap = new ConcurrentHashMap<>(); // taskId到sessionId的映射
     private static final AtomicLong messageCounter = new AtomicLong(0);
     private static final SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS");
     
-    // 统计信息
-    private static final List<Long> latencyList = new CopyOnWriteArrayList<>();
-    private static final AtomicLong totalSent = new AtomicLong(0);
-    private static final AtomicLong totalReceived = new AtomicLong(0);
-    private static final AtomicLong totalFailed = new AtomicLong(0);
     private static final String STATS_INTERVAL_STR = System.getProperty("statsInterval", "10"); // 统计打印间隔（秒）
     
     // 测试时间控制
@@ -102,18 +103,41 @@ public class SupervisorAgentBatchMode {
     private static volatile boolean isShuttingDown = false;
     private static long testStartTime = 0;
     
+    // 租户信息类
+    private static class TenantInfo {
+        final String tenantId;
+        final String sessionId;
+        final String userId;
+        final Session session;
+        final List<Long> latencyList = new CopyOnWriteArrayList<>();
+        final AtomicLong totalSent = new AtomicLong(0);
+        final AtomicLong totalReceived = new AtomicLong(0);
+        final AtomicLong totalFailed = new AtomicLong(0);
+        
+        TenantInfo(String tenantId, String sessionId, String userId, Session session) {
+            this.tenantId = tenantId;
+            this.sessionId = sessionId;
+            this.userId = userId;
+            this.session = session;
+        }
+    }
+    
     // 消息信息类
     private static class MessageInfo {
         final String messageId;
         final String message;
         final long sendTime;
         final String agentName;
+        final String tenantId;
+        final String sessionId;
         
-        MessageInfo(String messageId, String message, long sendTime, String agentName) {
+        MessageInfo(String messageId, String message, long sendTime, String agentName, String tenantId, String sessionId) {
             this.messageId = messageId;
             this.message = message;
             this.sendTime = sendTime;
             this.agentName = agentName;
+            this.tenantId = tenantId;
+            this.sessionId = sessionId;
         }
     }
     
@@ -134,19 +158,41 @@ public class SupervisorAgentBatchMode {
             return;
         }
         
+        // 解析租户ID列表
+        String[] tenantIds = TENANT_IDS_STR.split(",");
+        for (String tenantId : tenantIds) {
+            String trimmed = tenantId.trim();
+            if (!StringUtils.isEmpty(trimmed)) {
+                tenantIdList.add(trimmed);
+            }
+        }
+        if (tenantIdList.isEmpty()) {
+            printSystemError("租户ID列表不能为空，请通过 -DtenantIds= 参数指定（逗号分隔）");
+            return;
+        }
+        
         BaseAgent baseAgent = initAgent(WEATHER_AGENT_NAME, TRAVEL_AGENT_NAME);
         printSystemInfo("🚀 启动批量模式 " + AGENT_NAME + "，消息: " + TEST_MESSAGE + "，QPS: " + qps);
-        printSystemInfo("📋 初始化会话...");
+        printSystemInfo("📋 初始化会话，租户数量: " + tenantIdList.size());
         
         InMemoryArtifactService artifactService = new InMemoryArtifactService();
         sessionService = new InMemorySessionService();
         runner = new Runner(baseAgent, APP_NAME, artifactService, sessionService, /* memoryService= */ null);
-        Session session = runner
-            .sessionService()
-            .createSession(APP_NAME, USER_ID)
-            .blockingGet();
-        printSystemSuccess("✅ 会话创建成功: " + session.id());
-        sessionId = session.id();
+        
+        // 为每个租户创建独立的session
+        long baseTimestamp = System.currentTimeMillis();
+        for (String tenantId : tenantIdList) {
+            String userId = "user_" + tenantId;
+            String sessionId = baseTimestamp + "_" + tenantId;
+            Session session = runner
+                .sessionService()
+                .createSession(APP_NAME, userId, null, sessionId)
+                .blockingGet();
+            TenantInfo tenantInfo = new TenantInfo(tenantId, sessionId, userId, session);
+            tenantInfoMap.put(tenantId, tenantInfo);
+            tenantPendingMessageQueueMap.put(tenantId, new ConcurrentLinkedQueue<>());
+            printSystemSuccess("✅ 租户 " + tenantId + " 会话创建成功: " + sessionId);
+        }
         
         initAgentCardInfo(ACCESS_KEY, SECRET_KEY, WEATHER_AGENT_NAME, WEATHER_AGENT_URL);
         initAgentCardInfo(ACCESS_KEY, SECRET_KEY, TRAVEL_AGENT_NAME, TRAVEL_AGENT_URL);
@@ -190,7 +236,11 @@ public class SupervisorAgentBatchMode {
                 sendTestMessage(TEST_MESSAGE);
             } catch (Exception e) {
                 log.error("发送消息失败", e);
-                totalFailed.incrementAndGet();
+                // 记录到第一个租户的失败计数（因为无法确定具体租户）
+                if (!tenantInfoMap.isEmpty()) {
+                    TenantInfo firstTenant = tenantInfoMap.values().iterator().next();
+                    firstTenant.totalFailed.incrementAndGet();
+                }
             }
         }, 0, intervalMs, TimeUnit.MILLISECONDS);
         
@@ -216,7 +266,14 @@ public class SupervisorAgentBatchMode {
                 
                 while (System.currentTimeMillis() - waitStartTime < maxWaitTime) {
                     // 检查是否还有待处理的消息
-                    if (pendingMessageQueue.isEmpty() && messageInfoMap.isEmpty()) {
+                    boolean allEmpty = true;
+                    for (ConcurrentLinkedQueue<String> queue : tenantPendingMessageQueueMap.values()) {
+                        if (!queue.isEmpty()) {
+                            allEmpty = false;
+                            break;
+                        }
+                    }
+                    if (allEmpty && messageInfoMap.isEmpty()) {
                         printSystemInfo("✅ 所有消息已完成");
                         break;
                     }
@@ -280,6 +337,15 @@ public class SupervisorAgentBatchMode {
     }
     
     private static void sendTestMessage(String message) {
+        // 轮询选择租户
+        int tenantIndex = (int) (tenantRoundRobinIndex.getAndIncrement() % tenantIdList.size());
+        String tenantId = tenantIdList.get(tenantIndex);
+        TenantInfo tenantInfo = tenantInfoMap.get(tenantId);
+        if (tenantInfo == null) {
+            log.error("[消息发送失败] 租户信息不存在: {}", tenantId);
+            return;
+        }
+        
         long messageId = messageCounter.incrementAndGet();
         String messageIdStr = String.valueOf(messageId);
         long sendTime = System.currentTimeMillis();
@@ -287,21 +353,22 @@ public class SupervisorAgentBatchMode {
         // 使用关键词路由，获取目标Agent
         String targetAgent = getTargetAgentByKeyword(message);
         if (targetAgent == null) {
-            log.warn("[消息路由失败] ID: {}, 消息: {}", messageIdStr, message);
-            totalFailed.incrementAndGet();
+            log.warn("[消息路由失败] ID: {}, 租户: {}, 消息: {}", messageIdStr, tenantId, message);
+            tenantInfo.totalFailed.incrementAndGet();
             return;
         }
         
         // 保存消息信息
-        MessageInfo info = new MessageInfo(messageIdStr, message, sendTime, targetAgent);
+        MessageInfo info = new MessageInfo(messageIdStr, message, sendTime, targetAgent, tenantId, tenantInfo.sessionId);
         messageInfoMap.put(messageIdStr, info);
-        pendingMessageQueue.offer(messageIdStr);
+        tenantPendingMessageQueueMap.get(tenantId).offer(messageIdStr);
         
-        totalSent.incrementAndGet();
-        log.debug("[消息发送] ID: {}, Agent: {}, 消息: {}", messageIdStr, targetAgent, message);
+        tenantInfo.totalSent.incrementAndGet();
+        log.debug("[消息发送] ID: {}, 租户: {}, SessionId: {}, Agent: {}, 消息: {}", 
+            messageIdStr, tenantId, tenantInfo.sessionId, targetAgent, message);
         
-        // 发送消息
-        routeMessageByKeyword(message, messageIdStr, targetAgent);
+        // 发送消息，使用sessionId作为contextId
+        routeMessageByKeyword(message, messageIdStr, targetAgent, tenantInfo.sessionId);
     }
     
     private static boolean checkConfigParam() {
@@ -320,7 +387,7 @@ public class SupervisorAgentBatchMode {
         return true;
     }
     
-    private static void dealMissionByMessage(Mission mission, String messageId) {
+    private static void dealMissionByMessage(Mission mission, String messageId, String sessionId) {
         if (null == mission || StringUtils.isEmpty(mission.getAgent()) || StringUtils.isEmpty(mission.getMessageInfo())) {
             return;
         }
@@ -331,7 +398,11 @@ public class SupervisorAgentBatchMode {
                 printSystemError("❌ Agent客户端未找到: " + agentName);
                 return;
             }
-            client.sendMessage(A2A.toUserMessage(mission.getMessageInfo()));
+            // 使用sessionId作为contextId，这样lite topic就会使用sessionId
+            String taskId = UUID.randomUUID().toString();
+            // 保存taskId到sessionId的映射
+            taskIdToSessionIdMap.put(taskId, sessionId);
+            client.sendMessage(A2A.createUserTextMessage(mission.getMessageInfo(), sessionId, taskId));
         } catch (Exception e) {
             printSystemError("❌ 转发消息失败: " + e.getMessage());
             log.error("转发消息失败", e);
@@ -419,14 +490,36 @@ public class SupervisorAgentBatchMode {
                             stringBuilder.append(extractTextFromMessage(tempArtifact));
                         }
                         String response = stringBuilder.toString();
-                        // 从队列中取出一个待处理的消息ID（FIFO方式）
-                        String messageId = pendingMessageQueue.poll();
-                        if (messageId == null) {
-                            // 如果队列为空，使用一个默认的ID
-                            messageId = "unknown-" + System.currentTimeMillis();
-                            log.warn("[消息接收] 无法找到对应的消息ID，使用默认ID: {}", messageId);
+                        // 从taskId获取对应的sessionId，然后找到对应的租户
+                        String taskId = task.getId();
+                        String sessionId = taskIdToSessionIdMap.get(taskId);
+                        if (StringUtils.isEmpty(sessionId)) {
+                            log.warn("[消息接收] 无法找到taskId对应的sessionId: {}", taskId);
+                            return;
                         }
-                        dealAgentResponse(response, messageId);
+                        
+                        // 根据sessionId找到对应的租户
+                        TenantInfo targetTenant = null;
+                        for (TenantInfo tenantInfo : tenantInfoMap.values()) {
+                            if (tenantInfo.sessionId.equals(sessionId)) {
+                                targetTenant = tenantInfo;
+                                break;
+                            }
+                        }
+                        
+                        if (targetTenant == null) {
+                            log.warn("[消息接收] 无法找到sessionId对应的租户: {}", sessionId);
+                            return;
+                        }
+                        
+                        // 从对应租户的队列中取出一个待处理的消息ID（FIFO方式）
+                        ConcurrentLinkedQueue<String> queue = tenantPendingMessageQueueMap.get(targetTenant.tenantId);
+                        String messageId = queue != null ? queue.poll() : null;
+                        if (messageId == null) {
+                            log.warn("[消息接收] 租户 {} 的消息队列为空，无法找到对应的消息ID", targetTenant.tenantId);
+                            return;
+                        }
+                        dealAgentResponse(response, messageId, targetTenant);
                     }
                 }
             }
@@ -468,8 +561,8 @@ public class SupervisorAgentBatchMode {
         return textBuilder.toString();
     }
     
-    private static void dealAgentResponse(String result, String messageId) {
-        if (StringUtils.isEmpty(result)) {
+    private static void dealAgentResponse(String result, String messageId, TenantInfo tenantInfo) {
+        if (StringUtils.isEmpty(result) || tenantInfo == null) {
             return;
         }
         long receiveTime = System.currentTimeMillis();
@@ -478,16 +571,18 @@ public class SupervisorAgentBatchMode {
         
         if (info != null) {
             duration = receiveTime - info.sendTime;
-            // 记录耗时数据用于统计
-            latencyList.add(duration);
-            totalReceived.incrementAndGet();
-            log.debug("[消息接收] ID: {}, Agent: {}, 耗时: {}ms", messageId, info.agentName, duration);
+            // 记录耗时数据到对应租户的统计
+            tenantInfo.latencyList.add(duration);
+            tenantInfo.totalReceived.incrementAndGet();
+            log.debug("[消息接收] ID: {}, 租户: {}, Agent: {}, 耗时: {}ms", 
+                messageId, tenantInfo.tenantId, info.agentName, duration);
         } else {
             log.warn("[消息接收] 无法找到消息ID对应的信息: {}", messageId);
         }
         
         // 清理已处理的消息信息（可选，避免内存泄漏）
         messageInfoMap.remove(messageId);
+        // 清理taskId映射（需要从MessageInfo中获取taskId，但当前没有保存，所以暂时不清理）
     }
     
     /**
@@ -495,8 +590,8 @@ public class SupervisorAgentBatchMode {
      * 根据输入的"天气"、"行程"关键词决定发送消息到哪个agent
      * 无记忆功能，忠诚的根据输入进行转发
      */
-    private static void routeMessageByKeyword(String userInput, String messageId, String targetAgent) {
-        if (StringUtils.isEmpty(userInput) || targetAgent == null) {
+    private static void routeMessageByKeyword(String userInput, String messageId, String targetAgent, String sessionId) {
+        if (StringUtils.isEmpty(userInput) || targetAgent == null || StringUtils.isEmpty(sessionId)) {
             return;
         }
         
@@ -504,7 +599,7 @@ public class SupervisorAgentBatchMode {
         
         // 创建 Mission 并转发
         Mission mission = new Mission(targetAgent, messageInfo);
-        dealMissionByMessage(mission, messageId);
+        dealMissionByMessage(mission, messageId, sessionId);
     }
     
     private static void printSystemInfo(String message) {
@@ -531,57 +626,92 @@ public class SupervisorAgentBatchMode {
      * 打印统计信息
      */
     private static void printStatistics() {
-        long sent = totalSent.get();
-        long received = totalReceived.get();
-        long failed = totalFailed.get();
-        int latencyCount = latencyList.size();
+        System.out.println("\n" + "=".repeat(100));
+        System.out.println("\u001B[36m📊 统计信息报告\u001B[0m");
+        System.out.println("=".repeat(100));
         
-        if (latencyCount == 0) {
-            printSystemInfo("📊 统计信息 - 已发送: " + sent + ", 已接收: " + received + ", 失败: " + failed + ", 耗时数据: 0");
-            return;
+        // 汇总统计
+        long totalSent = 0;
+        long totalReceived = 0;
+        long totalFailed = 0;
+        List<Long> allLatencies = new ArrayList<>();
+        
+        for (TenantInfo tenantInfo : tenantInfoMap.values()) {
+            totalSent += tenantInfo.totalSent.get();
+            totalReceived += tenantInfo.totalReceived.get();
+            totalFailed += tenantInfo.totalFailed.get();
+            allLatencies.addAll(tenantInfo.latencyList);
         }
         
-        // 计算统计指标
-        List<Long> sortedLatencies = new ArrayList<>(latencyList);
-        Collections.sort(sortedLatencies);
+        System.out.println(String.format("\u001B[33m汇总统计:\u001B[0m 总发送数: %d | 总接收数: %d | 失败数: %d | 成功率: %.2f%%", 
+            totalSent, totalReceived, totalFailed, totalSent > 0 ? (double) totalReceived / totalSent * 100 : 0));
+        System.out.println("-".repeat(100));
         
-        long min = sortedLatencies.get(0);
-        long max = sortedLatencies.get(sortedLatencies.size() - 1);
-        long sum = sortedLatencies.stream().mapToLong(Long::longValue).sum();
-        double avg = (double) sum / latencyCount;
+        // 每个租户的统计
+        for (TenantInfo tenantInfo : tenantInfoMap.values()) {
+            printTenantStatistics(tenantInfo);
+        }
         
-        // 计算百分位数
-        long p50 = getPercentile(sortedLatencies, 50);
-        long p90 = getPercentile(sortedLatencies, 90);
-        long p95 = getPercentile(sortedLatencies, 95);
-        long p99 = getPercentile(sortedLatencies, 99);
-        long p999 = getPercentile(sortedLatencies, 99.9);
+        // 汇总耗时统计
+        if (!allLatencies.isEmpty()) {
+            Collections.sort(allLatencies);
+            long min = allLatencies.get(0);
+            long max = allLatencies.get(allLatencies.size() - 1);
+            long sum = allLatencies.stream().mapToLong(Long::longValue).sum();
+            double avg = (double) sum / allLatencies.size();
+            long p50 = getPercentile(allLatencies, 50);
+            long p90 = getPercentile(allLatencies, 90);
+            long p95 = getPercentile(allLatencies, 95);
+            long p99 = getPercentile(allLatencies, 99);
+            long p999 = getPercentile(allLatencies, 99.9);
+            
+            System.out.println("-".repeat(100));
+            System.out.println("\u001B[33m汇总耗时统计 (ms):\u001B[0m");
+            System.out.println(String.format("  最小值: %d ms | 最大值: %d ms | 平均值: %.2f ms", min, max, avg));
+            System.out.println(String.format("  P50: %d ms | P90: %d ms | P95: %d ms | P99: %d ms | P99.9: %d ms", 
+                p50, p90, p95, p99, p999));
+        }
         
-        // 计算成功率
-        double successRate = sent > 0 ? (double) received / sent * 100 : 0;
-        
-        // 打印统计信息
-        System.out.println("\n" + "=".repeat(80));
-        System.out.println("\u001B[36m📊 统计信息报告\u001B[0m");
-        System.out.println("=".repeat(80));
-        System.out.println(String.format("总发送数: %d | 总接收数: %d | 失败数: %d | 成功率: %.2f%%", 
-            sent, received, failed, successRate));
-        System.out.println(String.format("样本数: %d", latencyCount));
-        System.out.println("-".repeat(80));
-        System.out.println("\u001B[33m耗时统计 (ms):\u001B[0m");
-        System.out.println(String.format("  最小值: %d ms", min));
-        System.out.println(String.format("  最大值: %d ms", max));
-        System.out.println(String.format("  平均值: %.2f ms", avg));
-        System.out.println(String.format("  P50:    %d ms", p50));
-        System.out.println(String.format("  P90:    %d ms", p90));
-        System.out.println(String.format("  P95:    %d ms", p95));
-        System.out.println(String.format("  P99:    %d ms", p99));
-        System.out.println(String.format("  P99.9:  %d ms", p999));
-        System.out.println("=".repeat(80) + "\n");
+        System.out.println("=".repeat(100) + "\n");
         
         // 记录到日志
-        log.info("统计信息 - 发送: {}, 接收: {}, 失败: {}, 成功率: {}%, 平均耗时: {}ms, P99: {}ms", 
-            sent, received, failed, String.format("%.2f", successRate), String.format("%.2f", avg), p99);
+        log.info("统计信息 - 总发送: {}, 总接收: {}, 总失败: {}, 租户数: {}", 
+            totalSent, totalReceived, totalFailed, tenantInfoMap.size());
+    }
+    
+    /**
+     * 打印单个租户的统计信息
+     */
+    private static void printTenantStatistics(TenantInfo tenantInfo) {
+        long sent = tenantInfo.totalSent.get();
+        long received = tenantInfo.totalReceived.get();
+        long failed = tenantInfo.totalFailed.get();
+        int latencyCount = tenantInfo.latencyList.size();
+        
+        double successRate = sent > 0 ? (double) received / sent * 100 : 0;
+        
+        System.out.println(String.format("\u001B[36m租户: %s (SessionId: %s)\u001B[0m", 
+            tenantInfo.tenantId, tenantInfo.sessionId));
+        System.out.println(String.format("  发送数: %d | 接收数: %d | 失败数: %d | 成功率: %.2f%%", 
+            sent, received, failed, successRate));
+        
+        if (latencyCount > 0) {
+            List<Long> sortedLatencies = new ArrayList<>(tenantInfo.latencyList);
+            Collections.sort(sortedLatencies);
+            
+            long min = sortedLatencies.get(0);
+            long max = sortedLatencies.get(sortedLatencies.size() - 1);
+            long sum = sortedLatencies.stream().mapToLong(Long::longValue).sum();
+            double avg = (double) sum / latencyCount;
+            long p50 = getPercentile(sortedLatencies, 50);
+            long p90 = getPercentile(sortedLatencies, 90);
+            long p99 = getPercentile(sortedLatencies, 99);
+            
+            System.out.println(String.format("  耗时统计: 样本数=%d, 最小=%dms, 最大=%dms, 平均=%.2fms, P50=%dms, P90=%dms, P99=%dms", 
+                latencyCount, min, max, avg, p50, p90, p99));
+        } else {
+            System.out.println("  耗时统计: 无数据");
+        }
     }
     
     /**

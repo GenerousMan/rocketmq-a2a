@@ -173,7 +173,6 @@ public class RocketMQTransport implements ClientTransport {
                 return;
             }
             MESSAGE_STREAM_RESPONSE_MAP.computeIfAbsent(this.namespace, k -> new HashMap<>()).put(responseMessageId, sseEventListener);
-            log.info("RocketMQTransport sendMessageStreaming success, responseMessageId: {}", responseMessageId);
         } catch (Exception e) {
             throw new A2AClientException("RocketMQTransport Failed to send streaming message request: " + e, e);
         }

@@ -34,3 +34,13 @@ build/
 ### Mac OS ###
 .DS_Store
 
+### Project Specific ###
+# Environment configuration
+env.sh
+**/env.sh
+
+# Log files
+logs/
+**/logs/
+*.log
+**/*.log

@@ -65,10 +65,10 @@ source "${SCRIPT_DIR}/env.sh"
 # 设置Agent名称和路径
 if [ "$AGENT_TYPE" == "weather" ]; then
     AGENT_NAME="WeatherAgent"
-    AGENT_DIR="${BENCHMARK_ROOT}/WeatherAgent"
+    AGENT_DIR="${BENCHMARK_ROOT}/rocketmq-a2a/WeatherAgent"
 elif [ "$AGENT_TYPE" == "travel" ]; then
     AGENT_NAME="TravelAgent"
-    AGENT_DIR="${BENCHMARK_ROOT}/TravelAgent"
+    AGENT_DIR="${BENCHMARK_ROOT}/rocketmq-a2a/TravelAgent"
 fi
 
 echo ""
@@ -138,9 +138,19 @@ case "$PROTOCOL" in
         JVM_OPTS="${JVM_OPTS} -DrocketMQNamespace=${ROCKETMQ_NAMESPACE}"
         JVM_OPTS="${JVM_OPTS} -DrocketMQAK=${ROCKETMQ_AK}"
         JVM_OPTS="${JVM_OPTS} -DrocketMQSK=${ROCKETMQ_SK}"
+        JVM_OPTS="${JVM_OPTS} -DrocketMQEndpoint=${ROCKETMQ_ENDPOINT}"
         JVM_OPTS="${JVM_OPTS} -DworkAgentResponseTopic=${WORK_AGENT_RESPONSE_TOPIC}"
         JVM_OPTS="${JVM_OPTS} -DworkAgentResponseGroupID=${WORK_AGENT_RESPONSE_GROUP_ID}"
         JVM_OPTS="${JVM_OPTS} -DapiKey=${API_KEY}"
+        
+        # 根据Agent类型设置业务Topic和ConsumerGroup
+        if [ "$AGENT_TYPE" == "weather" ]; then
+            JVM_OPTS="${JVM_OPTS} -DbizTopic=${WEATHER_AGENT_BIZ_TOPIC}"
+            JVM_OPTS="${JVM_OPTS} -DbizConsumerGroup=${WEATHER_AGENT_BIZ_CONSUMER_GROUP}"
+        elif [ "$AGENT_TYPE" == "travel" ]; then
+            JVM_OPTS="${JVM_OPTS} -DbizTopic=${TRAVEL_AGENT_BIZ_TOPIC}"
+            JVM_OPTS="${JVM_OPTS} -DbizConsumerGroup=${TRAVEL_AGENT_BIZ_CONSUMER_GROUP}"
+        fi
         
         # 启动Quarkus应用
         nohup java ${JVM_OPTS} -jar target/quarkus-app/quarkus-run.jar > "${LOG_FILE}" 2>&1 &

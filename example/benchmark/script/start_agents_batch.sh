@@ -97,19 +97,14 @@ echo ""
 
 if [ ${SUCCESS_COUNT} -gt 0 ]; then
     echo "💡 批量查看日志:"
-    if [ "$AGENT_TYPE" == "weather" ]; then
-        AGENT_DIR="${BENCHMARK_ROOT}/WeatherAgent"
-    elif [ "$AGENT_TYPE" == "travel" ]; then
-        AGENT_DIR="${BENCHMARK_ROOT}/TravelAgent"
-    fi
     
     # 加载环境变量以获取BENCHMARK_ROOT
     source "${SCRIPT_DIR}/env.sh" > /dev/null 2>&1
     
     if [ "$AGENT_TYPE" == "weather" ]; then
-        AGENT_DIR="${BENCHMARK_ROOT}/WeatherAgent"
+        AGENT_DIR="${BENCHMARK_ROOT}/rocketmq-a2a/WeatherAgent"
     elif [ "$AGENT_TYPE" == "travel" ]; then
-        AGENT_DIR="${BENCHMARK_ROOT}/TravelAgent"
+        AGENT_DIR="${BENCHMARK_ROOT}/rocketmq-a2a/TravelAgent"
     fi
     
     echo "   tail -f ${AGENT_DIR}/logs/${AGENT_TYPE}_*.log"

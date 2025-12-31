@@ -17,21 +17,31 @@
 #
 
 # RocketMQ 配置
-export ROCKETMQ_NAMESPACE="your_namespace"
-export ROCKETMQ_AK="your_access_key"
-export ROCKETMQ_SK="your_secret_key"
+export ROCKETMQ_NAMESPACE="rmq-cn-2ml4l0cyu05"
+export ROCKETMQ_AK="159iBRyW0k7Qjl6D"
+export ROCKETMQ_SK="42QASgxip3LMQy50"
+export ROCKETMQ_ENDPOINT="rmq-cn-2ml4l0cyu05.cn-hangzhou.rmq.aliyuncs.com:8080"
 export WORK_AGENT_RESPONSE_TOPIC="WorkerAgentResponse"
 export WORK_AGENT_RESPONSE_GROUP_ID="CID_HOST_AGENT_LITE"
+
+# Agent 业务 Topic 配置
+export WEATHER_AGENT_BIZ_TOPIC="WeatherAgentTask"
+export WEATHER_AGENT_BIZ_CONSUMER_GROUP="WeatherAgentTaskConsumerGroup"
+export TRAVEL_AGENT_BIZ_TOPIC="TravelAgentTask"
+export TRAVEL_AGENT_BIZ_CONSUMER_GROUP="TravelAgentTaskConsumerGroup"
 
 # API Key 配置
 export API_KEY="your_api_key"
 
 # 项目路径
-export PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-export BENCHMARK_ROOT="${PROJECT_ROOT}/example/benchmark/rocketmq-a2a"
+export SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export BENCHMARK_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+export PROJECT_ROOT="$(cd "${BENCHMARK_ROOT}/../.." && pwd)"
 
 echo "✅ 环境变量已加载"
 echo "   - RocketMQ Namespace: ${ROCKETMQ_NAMESPACE}"
 echo "   - RocketMQ Topic: ${WORK_AGENT_RESPONSE_TOPIC}"
 echo "   - RocketMQ GroupID: ${WORK_AGENT_RESPONSE_GROUP_ID}"
 echo "   - Project Root: ${PROJECT_ROOT}"
+echo "   - Benchmark Root: ${BENCHMARK_ROOT}"
+echo "   - Script Dir: ${SCRIPT_DIR}"

@@ -111,6 +111,8 @@ public class SimpleSupervisorAgent {
         final long triggerTime;
         volatile long completeTime = -1;
         volatile boolean isCompleted = false;
+        volatile String taskId; // 添加taskId字段
+        volatile int clientIndex = -1; // 记录使用的Client索引
         
         TaskInfo(String messageId, String message, String targetAgent, long triggerTime) {
             this.messageId = messageId;
@@ -121,6 +123,10 @@ public class SimpleSupervisorAgent {
         
         long getDuration() {
             return isCompleted ? (completeTime - triggerTime) : -1;
+        }
+        
+        long getPendingDuration() {
+            return isCompleted ? 0 : (System.currentTimeMillis() - triggerTime);
         }
     }
     
@@ -194,10 +200,10 @@ public class SimpleSupervisorAgent {
                 shouldStopSending = true;
                 sendTask.cancel(false);
                 
-                // 等待最多60秒让现有消息完成
-                printSystemInfo("⏳ 等待最多60秒让现有消息完成...");
+                // 等待让现有消息完成
+                printSystemInfo("⏳ 等待让现有消息完成...");
                 long waitStartTime = System.currentTimeMillis();
-                long maxWaitTime = 60 * 1000; // 60秒
+                long maxWaitTime = 300 * 1000; // 60秒
                 
                 while (System.currentTimeMillis() - waitStartTime < maxWaitTime) {
                     long pending = totalTriggered.get() - totalSentFailed.get() - totalCompleted.get();
@@ -267,7 +273,8 @@ public class SimpleSupervisorAgent {
         TaskInfo taskInfo = new TaskInfo(messageIdStr, message, targetAgent, triggerTime);
         taskInfoMap.put(messageIdStr, taskInfo);
         
-        log.debug("[任务触发] ID: {}, Agent: {}, 消息: {}", messageIdStr, targetAgent, message);
+        // 打印任务发起日志
+        printTaskInitiated(messageIdStr, targetAgent, message, triggerTime);
         
         // 发送消息，支持重试
         sendToAgentWithRetry(message, messageIdStr, targetAgent, 0);
@@ -289,6 +296,12 @@ public class SimpleSupervisorAgent {
         AtomicLong index = agentRoundRobinIndexMap.get(agentName);
         int clientIndex = (int) (index.getAndIncrement() % clients.size());
         Client client = clients.get(clientIndex);
+        
+        // 记录Client索引到TaskInfo
+        TaskInfo taskInfo = taskInfoMap.get(messageId);
+        if (taskInfo != null) {
+            taskInfo.clientIndex = clientIndex;
+        }
         
         log.debug("[发送尝试] ID: {}, Agent: {}, Client索引: {}/{}, 重试次数: {}", 
             messageId, agentName, clientIndex, clients.size() - 1, retryCount);
@@ -365,6 +378,12 @@ public class SimpleSupervisorAgent {
         try {
             String taskId = UUID.randomUUID().toString();
             taskIdToMessageIdMap.put(taskId, messageId);
+            
+            // 记录taskId到TaskInfo
+            TaskInfo taskInfo = taskInfoMap.get(messageId);
+            if (taskInfo != null) {
+                taskInfo.taskId = taskId;
+            }
             
             CompletableFuture<Void> messageResponse = new CompletableFuture<>();
             taskIdToFutureMap.put(taskId, messageResponse);
@@ -452,6 +471,14 @@ public class SimpleSupervisorAgent {
                 
                 // 创建错误处理器
                 Consumer<Throwable> errorHandler = (error) -> {
+                    // 识别RocketMQ消息重推导致的Task已存在错误，这是正常现象，不需要打印ERROR
+                    if (error != null && error.getMessage() != null && 
+                        error.getMessage().contains("Task is already set")) {
+                        log.debug("[消息重推] {} [{}] - RocketMQ消息重推，Task已处理，忽略: {}", 
+                            agentName, url, error.getMessage());
+                        return;
+                    }
+                    // 其他错误正常打印
                     log.error("Streaming error occurred for {} [{}]", agentName, url, error);
                     printSystemError("❌ 流式错误 [" + agentName + " - " + url + "]: " + error.getMessage());
                 };
@@ -505,7 +532,10 @@ public class SimpleSupervisorAgent {
         totalCompleted.incrementAndGet();
         
         long duration = taskInfo.getDuration();
-        log.debug("[任务完成] ID: {}, Agent: {}, 耗时: {}ms", messageId, taskInfo.targetAgent, duration);
+        
+        // 打印任务完成日志
+        printTaskCompleted(messageId, taskInfo.targetAgent, taskInfo.message, 
+                          taskInfo.taskId, taskInfo.clientIndex, duration, response);
     }
     
     /**
@@ -545,6 +575,11 @@ public class SimpleSupervisorAgent {
         System.out.println(String.format("总触发数: %d | 发送失败数: %d | 已完成数: %d | 待完成数: %d", 
             triggered, failed, completed, pending));
         System.out.println(String.format("触发成功率: %.2f%%", successRate));
+        System.out.println("=".repeat(100));
+        
+        // 打印当前未完成任务的详细信息
+        printPendingTasks();
+        
         System.out.println("=".repeat(100) + "\n");
     }
     
@@ -600,8 +635,8 @@ public class SimpleSupervisorAgent {
         System.out.println("=".repeat(100) + "\n");
         
         // 记录到日志
-        log.info("最终统计 - 触发: {}, 失败: {}, 完成: {}, 触发成功率: {:.2f}%, 完成率: {:.2f}%", 
-            triggered, failed, completed, triggerSuccessRate, completionRate);
+        log.info("最终统计 - 触发: {}, 失败: {}, 完成: {}, 触发成功率: {}%, 完成率: {}%", 
+            triggered, failed, completed, String.format("%.2f", triggerSuccessRate), String.format("%.2f", completionRate));
     }
     
     /**
@@ -681,5 +716,85 @@ public class SimpleSupervisorAgent {
     private static void printSystemError(String message) {
         System.out.println("\u001B[31m[ERROR] " + message + "\u001B[0m");
         log.error(message);
+    }
+    
+    /**
+     * 打印调试信息（RocketMQ消息重推等非关键问题）
+     */
+    private static void printSystemDebug(String message) {
+        log.debug(message);
+    }
+    
+    /**
+     * 打印任务发起日志
+     */
+    private static void printTaskInitiated(String messageId, String targetAgent, String message, long triggerTime) {
+        String timestamp = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS").format(new java.util.Date(triggerTime));
+        String logMessage = String.format("\u001B[32m[任务发起]\u001B[0m MsgID: %s | Agent: %s | 消息: %s | 时间: %s", 
+            messageId, targetAgent, message, timestamp);
+        System.out.println(logMessage);
+        log.info("[任务发起] MsgID: {}, Agent: {}, 消息: {}, 时间: {}", messageId, targetAgent, message, timestamp);
+    }
+    
+    /**
+     * 打印任务完成日志
+     */
+    private static void printTaskCompleted(String messageId, String targetAgent, String message, 
+                                           String taskId, int clientIndex, long duration, String response) {
+        String timestamp = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS").format(new java.util.Date());
+        String logMessage = String.format(
+            "\u001B[33m[任务完成]\u001B[0m MsgID: %s | TaskID: %s | Agent: %s | Client索引: %d | 消息: %s | 耗时: %dms | 响应: %s | 时间: %s", 
+            messageId, taskId, targetAgent, clientIndex, message, duration, 
+            response.length() > 50 ? response.substring(0, 50) + "..." : response, timestamp);
+        System.out.println(logMessage);
+        log.info("[任务完成] MsgID: {}, TaskID: {}, Agent: {}, Client索引: {}, 消息: {}, 耗时: {}ms, 响应: {}, 时间: {}", 
+                messageId, taskId, targetAgent, clientIndex, message, duration, response, timestamp);
+    }
+    
+    /**
+     * 打印当前未完成任务的详细信息
+     */
+    private static void printPendingTasks() {
+        List<TaskInfo> pendingTasks = new ArrayList<>();
+        for (TaskInfo taskInfo : taskInfoMap.values()) {
+            if (!taskInfo.isCompleted) {
+                pendingTasks.add(taskInfo);
+            }
+        }
+        
+        if (pendingTasks.isEmpty()) {
+            System.out.println("\u001B[36m📋 当前未完成任务: 无\u001B[0m");
+            return;
+        }
+        
+        // 按等待时间排序（最长等待时间排在前面）
+        pendingTasks.sort((t1, t2) -> Long.compare(t2.getPendingDuration(), t1.getPendingDuration()));
+        
+        System.out.println("\u001B[36m📋 当前未完成任务 (共 " + pendingTasks.size() + " 个):\u001B[0m");
+        System.out.println("-".repeat(100));
+        
+        // 最多显示前20个未完成任务
+        int displayCount = Math.min(20, pendingTasks.size());
+        for (int i = 0; i < displayCount; i++) {
+            TaskInfo task = pendingTasks.get(i);
+            long pendingDuration = task.getPendingDuration();
+            String timestamp = new java.text.SimpleDateFormat("HH:mm:ss").format(new java.util.Date(task.triggerTime));
+            
+            String taskIdInfo = task.taskId != null ? task.taskId : "未分配";
+            String clientInfo = task.clientIndex >= 0 ? String.valueOf(task.clientIndex) : "未知";
+            
+            System.out.println(String.format(
+                "  [%2d] MsgID: %s | TaskID: %s | Agent: %s | Client: %s | 等待时长: %dms | 发起时间: %s | 消息: %s",
+                i + 1, task.messageId, taskIdInfo, task.targetAgent, clientInfo, 
+                pendingDuration, timestamp, 
+                task.message.length() > 30 ? task.message.substring(0, 30) + "..." : task.message
+            ));
+        }
+        
+        if (pendingTasks.size() > displayCount) {
+            System.out.println(String.format("  ... 还有 %d 个未完成任务未显示", pendingTasks.size() - displayCount));
+        }
+        
+        System.out.println("-".repeat(100));
     }
 }

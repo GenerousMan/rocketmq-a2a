@@ -43,36 +43,59 @@ stop_by_port() {
     local PORT=$1
     echo "🔍 查找端口 ${PORT} 上的进程..."
     
-    PID=$(lsof -ti tcp:${PORT} 2>/dev/null)
+    # 只查找监听该端口的进程（LISTEN状态），不包括连接到该端口的客户端
+    LISTENING_PIDS=$(lsof -ti tcp:${PORT} -sTCP:LISTEN 2>/dev/null)
     
-    if [ -n "$PID" ]; then
-        echo "⚠️  找到进程 ${PID}"
+    if [ -n "$LISTENING_PIDS" ]; then
+        echo "⚠️  找到监听该端口的进程: ${LISTENING_PIDS}"
         echo "   正在停止..."
-        kill -15 ${PID} 2>/dev/null
         
-        # 等待进程优雅退出
-        for i in {1..10}; do
-            sleep 1
-            if ! ps -p ${PID} > /dev/null 2>&1; then
-                echo "✅ 进程已停止"
-                return 0
+        SUCCESS=0
+        FAIL=0
+        
+        for PID in $LISTENING_PIDS; do
+            # 获取进程名称
+            PROC_NAME=$(ps -p ${PID} -o comm= 2>/dev/null | tail -1)
+            echo ""
+            echo "   处理进程 ${PID} (${PROC_NAME})..."
+            kill -15 ${PID} 2>/dev/null
+            
+            # 等待进程优雅退出
+            for i in {1..10}; do
+                sleep 1
+                if ! ps -p ${PID} > /dev/null 2>&1; then
+                    echo "   ✅ 进程 ${PID} 已停止"
+                    ((SUCCESS++))
+                    break
+                fi
+            done
+            
+            # 如果还没停止，强制杀掉
+            if ps -p ${PID} > /dev/null 2>&1; then
+                echo "   进程未响应，强制终止..."
+                kill -9 ${PID} 2>/dev/null
+                sleep 1
+                
+                if ps -p ${PID} > /dev/null 2>&1; then
+                    echo "   ❌ 无法停止进程 ${PID}"
+                    ((FAIL++))
+                else
+                    echo "   ✅ 进程 ${PID} 已强制停止"
+                    ((SUCCESS++))
+                fi
             fi
         done
         
-        # 如果还没停止，强制杀掉
-        echo "   进程未响应，强制终止..."
-        kill -9 ${PID} 2>/dev/null
-        sleep 1
-        
-        if ps -p ${PID} > /dev/null 2>&1; then
-            echo "❌ 无法停止进程 ${PID}"
-            return 1
-        else
-            echo "✅ 进程已强制停止"
+        echo ""
+        if [ $FAIL -eq 0 ]; then
+            echo "✅ 所有进程已停止 (成功: ${SUCCESS})"
             return 0
+        else
+            echo "⚠️  部分进程停止失败 (成功: ${SUCCESS}, 失败: ${FAIL})"
+            return 1
         fi
     else
-        echo "ℹ️  端口 ${PORT} 上没有运行的进程"
+        echo "ℹ️  端口 ${PORT} 上没有监听的进程"
         return 0
     fi
 }
@@ -82,8 +105,8 @@ stop_all() {
     echo "🛑 停止所有 Agent..."
     echo ""
     
-    # 查找所有WeatherAgent和TravelAgent进程
-    PIDS=$(ps aux | grep -E '(WeatherAgent|TravelAgent)' | grep -v grep | grep -v "$0" | awk '{print $2}')
+    # 查找所有WeatherAgent、TravelAgent和SupervisorAgent进程
+    PIDS=$(ps aux | grep -E '(WeatherAgent|TravelAgent|SimpleSupervisorAgent)' | grep -v grep | grep -v "$0" | awk '{print $2}')
     
     if [ -z "$PIDS" ]; then
         echo "ℹ️  没有找到运行中的Agent"

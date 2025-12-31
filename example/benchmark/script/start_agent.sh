@@ -21,13 +21,14 @@ usage() {
     echo "Usage: $0 <protocol> <agent_type> <port>"
     echo ""
     echo "参数说明:"
-    echo "  protocol    - 协议类型 (目前仅支持: rocketmq-a2a)"
+    echo "  protocol    - 协议类型 (rocketmq-a2a, http)"
     echo "  agent_type  - Agent类型 (weather 或 travel)"
     echo "  port        - 启动端口号"
     echo ""
     echo "示例:"
     echo "  $0 rocketmq-a2a weather 8080"
-    echo "  $0 rocketmq-a2a travel 8888"
+    echo "  $0 http weather 8080"
+    echo "  $0 http travel 8888"
     exit 1
 }
 
@@ -42,9 +43,9 @@ AGENT_TYPE=$2
 PORT=$3
 
 # 检查协议类型
-if [ "$PROTOCOL" != "rocketmq-a2a" ]; then
+if [ "$PROTOCOL" != "rocketmq-a2a" ] && [ "$PROTOCOL" != "http" ]; then
     echo "❌ 错误: 不支持的协议类型 '$PROTOCOL'"
-    echo "   目前仅支持: rocketmq-a2a"
+    echo "   支持的类型: rocketmq-a2a, http"
     exit 1
 fi
 
@@ -65,10 +66,18 @@ source "${SCRIPT_DIR}/env.sh"
 # 设置Agent名称和路径
 if [ "$AGENT_TYPE" == "weather" ]; then
     AGENT_NAME="WeatherAgent"
-    AGENT_DIR="${BENCHMARK_ROOT}/rocketmq-a2a/WeatherAgent"
+    if [ "$PROTOCOL" == "http" ]; then
+        AGENT_DIR="${BENCHMARK_ROOT}/http/WeatherAgent"
+    else
+        AGENT_DIR="${BENCHMARK_ROOT}/rocketmq-a2a/WeatherAgent"
+    fi
 elif [ "$AGENT_TYPE" == "travel" ]; then
     AGENT_NAME="TravelAgent"
-    AGENT_DIR="${BENCHMARK_ROOT}/rocketmq-a2a/TravelAgent"
+    if [ "$PROTOCOL" == "http" ]; then
+        AGENT_DIR="${BENCHMARK_ROOT}/http/TravelAgent"
+    else
+        AGENT_DIR="${BENCHMARK_ROOT}/rocketmq-a2a/TravelAgent"
+    fi
 fi
 
 echo ""
@@ -79,21 +88,45 @@ echo "   - 目录: ${AGENT_DIR}"
 # 检查端口占用情况
 echo ""
 echo "🔍 检查端口 ${PORT} 占用情况..."
-PID=$(lsof -ti tcp:${PORT} 2>/dev/null)
 
-if [ -n "$PID" ]; then
-    echo "⚠️  端口 ${PORT} 已被进程 ${PID} 占用"
-    echo "   正在杀掉进程..."
-    kill -9 ${PID} 2>/dev/null
-    sleep 2
+# 查找监听该端口的进程（只杀监听端口的进程，不杀连接到该端口的客户端）
+LISTENING_PIDS=$(lsof -ti tcp:${PORT} -sTCP:LISTEN 2>/dev/null)
+
+if [ -n "$LISTENING_PIDS" ]; then
+    echo "⚠️  端口 ${PORT} 已被以下进程监听: ${LISTENING_PIDS}"
+    echo "   正在停止进程..."
     
-    # 再次检查
-    PID=$(lsof -ti tcp:${PORT} 2>/dev/null)
-    if [ -n "$PID" ]; then
-        echo "❌ 无法杀掉进程 ${PID}，请手动处理"
+    for PID in $LISTENING_PIDS; do
+        # 获取进程名称以确认
+        PROC_NAME=$(ps -p ${PID} -o comm= 2>/dev/null | tail -1)
+        echo "   - 停止进程 ${PID} (${PROC_NAME})..."
+        kill -15 ${PID} 2>/dev/null
+        
+        # 等待进程优雅退出
+        for i in {1..5}; do
+            sleep 1
+            if ! ps -p ${PID} > /dev/null 2>&1; then
+                echo "   ✅ 进程 ${PID} 已停止"
+                break
+            fi
+        done
+        
+        # 如果还没停止，强制终止
+        if ps -p ${PID} > /dev/null 2>&1; then
+            echo "   强制终止进程 ${PID}..."
+            kill -9 ${PID} 2>/dev/null
+            sleep 1
+        fi
+    done
+    
+    # 再次检查端口
+    sleep 1
+    LISTENING_PIDS=$(lsof -ti tcp:${PORT} -sTCP:LISTEN 2>/dev/null)
+    if [ -n "$LISTENING_PIDS" ]; then
+        echo "❌ 无法释放端口 ${PORT}，仍有进程 ${LISTENING_PIDS} 监听，请手动处理"
         exit 1
     fi
-    echo "✅ 进程已终止"
+    echo "✅ 端口 ${PORT} 已释放"
 else
     echo "✅ 端口 ${PORT} 可用"
 fi
@@ -108,7 +141,13 @@ fi
 cd "${AGENT_DIR}" || exit 1
 
 # 检查是否已构建
-if [ ! -f "target/quarkus-app/quarkus-run.jar" ]; then
+if [ "$PROTOCOL" == "http" ]; then
+    JAR_FILE="target/Http${AGENT_NAME}-1.0.0-SNAPSHOT.jar"
+else
+    JAR_FILE="target/quarkus-app/quarkus-run.jar"
+fi
+
+if [ ! -f "$JAR_FILE" ]; then
     echo ""
     echo "📦 首次运行，正在构建 ${AGENT_NAME}..."
     mvn clean package -DskipTests -q
@@ -158,9 +197,13 @@ case "$PROTOCOL" in
         ;;
     
     http)
-        # TODO: HTTP协议启动逻辑
-        echo "⚠️  HTTP协议启动逻辑待实现"
-        exit 1
+        # HTTP协议启动逻辑
+        JVM_OPTS="-Dserver.port=${PORT}"
+        
+        # 启动Spring Boot应用
+        JAR_FILE="target/Http${AGENT_NAME}-1.0.0-SNAPSHOT.jar"
+        nohup java ${JVM_OPTS} -jar "${JAR_FILE}" > "${LOG_FILE}" 2>&1 &
+        AGENT_PID=$!
         ;;
     
     a2a)

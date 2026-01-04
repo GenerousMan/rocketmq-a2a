@@ -39,6 +39,7 @@ public class TravelAgentController {
     private static final ExecutorService executorService = Executors.newFixedThreadPool(100);
     private static final OkHttpClient httpClient = new OkHttpClient();
     private static final MediaType JSON_MEDIA_TYPE = MediaType.parse("application/json; charset=utf-8");
+    private static final int PROCESS_TIME_SECONDS = Integer.parseInt(System.getProperty("delaySeconds", "2"));
     
     /**
      * 处理行程规划请求
@@ -73,7 +74,8 @@ public class TravelAgentController {
     private void processMessage(Message message) {
         try {
             // 模拟LLM处理时间
-            Thread.sleep(2000);
+            log.info("TravelAgent will delay {} seconds before responding", PROCESS_TIME_SECONDS);
+            Thread.sleep(PROCESS_TIME_SECONDS * 1000);
             
             // 生成响应
             String result = "根据您的旅行需求，我为您推荐了合适的旅行方案。建议您选择热门旅游目的地，享受美好的旅程。";

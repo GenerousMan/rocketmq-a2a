@@ -18,31 +18,39 @@
 
 # 使用说明
 usage() {
-    echo "Usage: $0 <protocol> <agent_type> <start_port> <count>"
+    echo "Usage: $0 <protocol> <agent_type> <process_time_seconds> <start_port> <count>"
     echo ""
     echo "参数说明:"
-    echo "  protocol    - 协议类型 (rocketmq-a2a, http, a2a)"
-    echo "  agent_type  - Agent类型 (weather 或 travel)"
-    echo "  start_port  - 起始端口号"
-    echo "  count       - 启动Agent数量"
+    echo "  protocol           - 协议类型 (rocketmq-a2a, http, a2a)"
+    echo "  agent_type         - Agent类型 (weather 或 travel)"
+    echo "  process_time_seconds - Agent处理时间（秒）"
+    echo "  start_port         - 起始端口号"
+    echo "  count              - 启动Agent数量"
     echo ""
     echo "示例:"
-    echo "  $0 rocketmq-a2a weather 8080 3  # 在端口 8080, 8081, 8082 启动3个WeatherAgent"
-    echo "  $0 a2a weather 8080 2            # 在端口 8080, 8081 启动2个WeatherAgent (A2A协议)"
-    echo "  $0 a2a travel 8888 2            # 在端口 8888, 8889 启动2个TravelAgent (A2A协议)"
+    echo "  $0 rocketmq-a2a weather 2 8080 3  # 在端口 8080, 8081, 8082 启动3个WeatherAgent，处理时间2秒"
+    echo "  $0 a2a weather 5 8080 2          # 在端口 8080, 8081 启动2个WeatherAgent，处理时间5秒"
+    echo "  $0 a2a travel 3 8888 2           # 在端口 8888, 8889 启动2个TravelAgent，处理时间3秒"
     exit 1
 }
 
 # 检查参数
-if [ $# -ne 4 ]; then
+if [ $# -ne 5 ]; then
     echo "❌ 错误: 参数数量不正确"
     usage
 fi
 
 PROTOCOL=$1
 AGENT_TYPE=$2
-START_PORT=$3
-COUNT=$4
+PROCESS_TIME_SECONDS=$3
+START_PORT=$4
+COUNT=$5
+
+# 检查处理时间是否为正整数
+if ! [[ "$PROCESS_TIME_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
+    echo "❌ 错误: 处理时间必须是正整数（秒）"
+    usage
+fi
 
 # 检查count是否为正整数
 if ! [[ "$COUNT" =~ ^[1-9][0-9]*$ ]]; then
@@ -54,7 +62,9 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 echo "🚀 批量启动 ${COUNT} 个 ${AGENT_TYPE} Agent (${PROTOCOL})"
+echo "   处理时间: ${PROCESS_TIME_SECONDS} 秒"
 echo "   起始端口: ${START_PORT}"
+echo "   端口范围: ${START_PORT} - $((START_PORT + COUNT - 1))"
 echo ""
 
 # 记录启动的Agent信息
@@ -70,7 +80,7 @@ for ((i=0; i<COUNT; i++)); do
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     
     # 调用单Agent启动脚本
-    "${SCRIPT_DIR}/start_agent.sh" "${PROTOCOL}" "${AGENT_TYPE}" "${PORT}"
+    "${SCRIPT_DIR}/start_agent.sh" "${PROTOCOL}" "${AGENT_TYPE}" "${PROCESS_TIME_SECONDS}" "${PORT}"
     
     if [ $? -eq 0 ]; then
         ((SUCCESS_COUNT++))

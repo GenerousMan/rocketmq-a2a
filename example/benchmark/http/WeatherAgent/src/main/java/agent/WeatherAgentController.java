@@ -39,6 +39,7 @@ public class WeatherAgentController {
     private static final ExecutorService executorService = Executors.newFixedThreadPool(100);
     private static final OkHttpClient httpClient = new OkHttpClient();
     private static final MediaType JSON_MEDIA_TYPE = MediaType.parse("application/json; charset=utf-8");
+    private static final int PROCESS_TIME_SECONDS = Integer.parseInt(System.getProperty("delaySeconds", "2"));
     
     /**
      * 处理天气查询请求
@@ -73,7 +74,8 @@ public class WeatherAgentController {
     private void processMessage(Message message) {
         try {
             // 模拟LLM处理时间
-            Thread.sleep(2000);
+            log.info("WeatherAgent will delay {} seconds before responding", PROCESS_TIME_SECONDS);
+            Thread.sleep(PROCESS_TIME_SECONDS * 1000);
             
             // 生成响应
             String result = "根据您的问题，我为您查询了天气信息。当前天气晴朗，温度适宜。";

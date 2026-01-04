@@ -19,6 +19,7 @@ package agent;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 import com.alibaba.dashscope.app.Application;
 import com.alibaba.dashscope.app.ApplicationParam;
 import com.alibaba.dashscope.app.ApplicationResult;
@@ -49,6 +50,7 @@ public class AgentExecutorProducer {
     private static final String ApiKey = System.getProperty("apiKey");
     private static final String AppId = System.getProperty("appId");
     private static final Logger log = LoggerFactory.getLogger(AgentExecutorProducer.class);
+    private static final int DELAY_SECONDS = Integer.parseInt(System.getProperty("delaySeconds", "2"));
 
     @Produces
     public AgentExecutor agentExecutor() {
@@ -63,9 +65,10 @@ public class AgentExecutorProducer {
                     eventQueue.enqueueEvent(task);
                 }
                 TaskUpdater taskUpdater = new TaskUpdater(context, eventQueue);
-                // 同步执行，等待2秒后处理
+                // 同步执行，等待指定秒数后处理
                 try {
-                    Thread.sleep(2000);
+                    log.info("WeatherAgent will delay {} seconds before responding", DELAY_SECONDS);
+                    TimeUnit.SECONDS.sleep(DELAY_SECONDS);
                     // 直接返回固定文本
                     String fixedText = "根据您的问题，我为您查询了天气信息。当前天气晴朗，温度适宜。";
                     List<Part<?>> parts = List.of(new TextPart(fixedText, null));

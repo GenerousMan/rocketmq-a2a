@@ -18,30 +18,38 @@
 
 # 使用说明
 usage() {
-    echo "Usage: $0 <protocol> <agent_type> <port>"
+    echo "Usage: $0 <protocol> <agent_type> <process_time_seconds> <port>"
     echo ""
     echo "参数说明:"
-    echo "  protocol    - 协议类型 (rocketmq-a2a, http, a2a)"
-    echo "  agent_type  - Agent类型 (weather 或 travel)"
-    echo "  port        - 启动端口号"
+    echo "  protocol           - 协议类型 (rocketmq-a2a, http, a2a)"
+    echo "  agent_type         - Agent类型 (weather 或 travel)"
+    echo "  process_time_seconds - Agent处理时间（秒）"
+    echo "  port               - 启动端口号"
     echo ""
     echo "示例:"
-    echo "  $0 rocketmq-a2a weather 8080"
-    echo "  $0 http weather 8080"
-    echo "  $0 a2a weather 8080"
-    echo "  $0 a2a travel 8888"
+    echo "  $0 rocketmq-a2a weather 2 8080"
+    echo "  $0 http weather 5 8080"
+    echo "  $0 a2a weather 3 8080"
+    echo "  $0 a2a travel 2 8888"
     exit 1
 }
 
 # 检查参数
-if [ $# -ne 3 ]; then
+if [ $# -ne 4 ]; then
     echo "❌ 错误: 参数数量不正确"
     usage
 fi
 
 PROTOCOL=$1
 AGENT_TYPE=$2
-PORT=$3
+PROCESS_TIME_SECONDS=$3
+PORT=$4
+
+# 检查处理时间是否为正整数
+if ! [[ "$PROCESS_TIME_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
+    echo "❌ 错误: 处理时间必须是正整数（秒）"
+    usage
+fi
 
 # 检查协议类型
 if [ "$PROTOCOL" != "rocketmq-a2a" ] && [ "$PROTOCOL" != "http" ] && [ "$PROTOCOL" != "a2a" ]; then
@@ -88,6 +96,7 @@ fi
 echo ""
 echo "🚀 启动 ${AGENT_NAME} (${PROTOCOL})"
 echo "   - 端口: ${PORT}"
+echo "   - 处理时间: ${PROCESS_TIME_SECONDS} 秒"
 echo "   - 目录: ${AGENT_DIR}"
 
 # 检查端口占用情况
@@ -182,6 +191,7 @@ case "$PROTOCOL" in
     rocketmq-a2a)
         # 设置RocketMQ相关的系统属性
         JVM_OPTS="-Dquarkus.http.port=${PORT}"
+        JVM_OPTS="${JVM_OPTS} -DdelaySeconds=${PROCESS_TIME_SECONDS}"
         JVM_OPTS="${JVM_OPTS} -DrocketMQNamespace=${ROCKETMQ_NAMESPACE}"
         JVM_OPTS="${JVM_OPTS} -DrocketMQAK=${ROCKETMQ_AK}"
         JVM_OPTS="${JVM_OPTS} -DrocketMQSK=${ROCKETMQ_SK}"
@@ -207,6 +217,7 @@ case "$PROTOCOL" in
     http)
         # HTTP协议启动逻辑
         JVM_OPTS="-Dserver.port=${PORT}"
+        JVM_OPTS="${JVM_OPTS} -DdelaySeconds=${PROCESS_TIME_SECONDS}"
         
         # 启动Spring Boot应用
         JAR_FILE="target/Http${AGENT_NAME}-1.0.0-SNAPSHOT.jar"
@@ -218,11 +229,9 @@ case "$PROTOCOL" in
         # A2A协议启动逻辑（使用Quarkus，纯A2A协议，不需要RocketMQ配置）
         JVM_OPTS="-Dquarkus.http.port=${PORT}"
         JVM_OPTS="${JVM_OPTS} -DagentUrl=http://localhost:${PORT}"
+        JVM_OPTS="${JVM_OPTS} -DdelaySeconds=${PROCESS_TIME_SECONDS}"
         
-        # 可选配置：延迟秒数和固定响应内容
-        if [ -n "${A2A_DELAY_SECONDS:-}" ]; then
-            JVM_OPTS="${JVM_OPTS} -DdelaySeconds=${A2A_DELAY_SECONDS}"
-        fi
+        # 可选配置：固定响应内容
         if [ -n "${A2A_FIXED_RESPONSE:-}" ]; then
             JVM_OPTS="${JVM_OPTS} -DfixedResponse=\"${A2A_FIXED_RESPONSE}\""
         fi
@@ -247,6 +256,7 @@ if ps -p ${AGENT_PID} > /dev/null 2>&1; then
     echo "✅ ${AGENT_NAME} 启动成功!"
     echo "   - PID: ${AGENT_PID}"
     echo "   - 端口: ${PORT}"
+    echo "   - 处理时间: ${PROCESS_TIME_SECONDS} 秒"
     echo "   - 日志: ${LOG_FILE}"
     echo ""
     echo "💡 查看日志: tail -f ${LOG_FILE}"

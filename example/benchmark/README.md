@@ -41,8 +41,8 @@ benchmark/
 所有协议实现都包含相同的基本测试场景：
 
 ```
-用户 <--> Supervisor Agent（双副本部署） <--> Weather Agent（双副本部署）
-                                      <--> Travel Agent（双副本部署）
+用户 <--> Supervisor Agent <--> Weather Agent（双副本部署）
+                          <--> Travel Agent（双副本部署）
 ```
 
 ### 配置说明
@@ -54,7 +54,7 @@ benchmark/
 
 `script/` 目录下包含以下脚本：
 
-1. **启动脚本**：一键拉起 a2a/http/rocketmq-a2a 三种协议的 6 个 Agent（2 个 Supervisor + 2 个 Weather + 2 个 Travel）
+1. **启动脚本**：一键拉起 a2a/http/rocketmq-a2a 三种协议的 4 个 Agent（2 个 Weather + 2 个 Travel）
 2. **网络故障注入脚本**：模拟网络故障场景
    - 丢包
    - TCP 连接中断（tcpkill）

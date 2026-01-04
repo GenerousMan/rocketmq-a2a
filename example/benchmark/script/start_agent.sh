@@ -21,14 +21,15 @@ usage() {
     echo "Usage: $0 <protocol> <agent_type> <port>"
     echo ""
     echo "参数说明:"
-    echo "  protocol    - 协议类型 (rocketmq-a2a, http)"
+    echo "  protocol    - 协议类型 (rocketmq-a2a, http, a2a)"
     echo "  agent_type  - Agent类型 (weather 或 travel)"
     echo "  port        - 启动端口号"
     echo ""
     echo "示例:"
     echo "  $0 rocketmq-a2a weather 8080"
     echo "  $0 http weather 8080"
-    echo "  $0 http travel 8888"
+    echo "  $0 a2a weather 8080"
+    echo "  $0 a2a travel 8888"
     exit 1
 }
 
@@ -43,9 +44,9 @@ AGENT_TYPE=$2
 PORT=$3
 
 # 检查协议类型
-if [ "$PROTOCOL" != "rocketmq-a2a" ] && [ "$PROTOCOL" != "http" ]; then
+if [ "$PROTOCOL" != "rocketmq-a2a" ] && [ "$PROTOCOL" != "http" ] && [ "$PROTOCOL" != "a2a" ]; then
     echo "❌ 错误: 不支持的协议类型 '$PROTOCOL'"
-    echo "   支持的类型: rocketmq-a2a, http"
+    echo "   支持的类型: rocketmq-a2a, http, a2a"
     exit 1
 fi
 
@@ -68,6 +69,8 @@ if [ "$AGENT_TYPE" == "weather" ]; then
     AGENT_NAME="WeatherAgent"
     if [ "$PROTOCOL" == "http" ]; then
         AGENT_DIR="${BENCHMARK_ROOT}/http/WeatherAgent"
+    elif [ "$PROTOCOL" == "a2a" ]; then
+        AGENT_DIR="${BENCHMARK_ROOT}/a2a/WeatherAgent"
     else
         AGENT_DIR="${BENCHMARK_ROOT}/rocketmq-a2a/WeatherAgent"
     fi
@@ -75,6 +78,8 @@ elif [ "$AGENT_TYPE" == "travel" ]; then
     AGENT_NAME="TravelAgent"
     if [ "$PROTOCOL" == "http" ]; then
         AGENT_DIR="${BENCHMARK_ROOT}/http/TravelAgent"
+    elif [ "$PROTOCOL" == "a2a" ]; then
+        AGENT_DIR="${BENCHMARK_ROOT}/a2a/TravelAgent"
     else
         AGENT_DIR="${BENCHMARK_ROOT}/rocketmq-a2a/TravelAgent"
     fi
@@ -143,6 +148,8 @@ cd "${AGENT_DIR}" || exit 1
 # 检查是否已构建
 if [ "$PROTOCOL" == "http" ]; then
     JAR_FILE="target/Http${AGENT_NAME}-1.0.0-SNAPSHOT.jar"
+elif [ "$PROTOCOL" == "a2a" ]; then
+    JAR_FILE="target/quarkus-app/quarkus-run.jar"
 else
     JAR_FILE="target/quarkus-app/quarkus-run.jar"
 fi
@@ -207,9 +214,12 @@ case "$PROTOCOL" in
         ;;
     
     a2a)
-        # TODO: A2A协议启动逻辑
-        echo "⚠️  A2A协议启动逻辑待实现"
-        exit 1
+        # A2A协议启动逻辑（使用Quarkus）
+        JVM_OPTS="-Dquarkus.http.port=${PORT}"
+        
+        # 启动Quarkus应用
+        nohup java ${JVM_OPTS} -jar target/quarkus-app/quarkus-run.jar > "${LOG_FILE}" 2>&1 &
+        AGENT_PID=$!
         ;;
     
     *)

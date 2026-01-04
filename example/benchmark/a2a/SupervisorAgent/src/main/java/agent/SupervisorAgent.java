@@ -17,6 +17,7 @@
 package agent;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -76,8 +77,8 @@ public class SupervisorAgent {
     private static final String SESSION_ID = "supervisor_session_" + System.currentTimeMillis();
 
     public static void main(String[] args) {
-        printSystemInfo("🚀 启动 SupervisorAgent，使用纯 A2A 协议（JSONRPC）实现 Agent 间交互");
-        printSystemInfo("📋 测试配置:");
+        printSystemInfo("启动 SupervisorAgent，使用纯 A2A 协议（JSONRPC）实现 Agent 间交互");
+        printSystemInfo("测试配置:");
         printSystemInfo("  - 测试消息: " + TEST_MESSAGE);
         printSystemInfo("  - QPS: " + QPS);
         printSystemInfo("  - 最大运行时长: " + MAX_TEST_TIME + " 秒");
@@ -90,25 +91,24 @@ public class SupervisorAgent {
         
         // 检查是否有可用的 Agent
         if (agentClientListMap.isEmpty()) {
-            printSystemError("❌ 没有可用的 Agent 客户端，退出");
+            printSystemError("没有可用的 Agent 客户端，退出");
             System.exit(1);
         }
         
         // 根据消息内容路由到对应的 Agent
         String targetAgent = routeToAgent(TEST_MESSAGE);
         if (targetAgent == null) {
-            printSystemError("❌ 无法识别消息类型，请确保消息包含'天气'或'行程'相关关键词");
+            printSystemError("无法识别消息类型，请确保消息包含'天气'或'行程'相关关键词");
             System.exit(1);
         }
         
-        printSystemInfo("📤 目标 Agent: " + targetAgent);
-        printSystemInfo("⏱️  开始压测...");
+        printSystemInfo("目标 Agent: " + targetAgent);
+        printSystemInfo("开始压测...");
         
         // 启动定期统计输出
         scheduler.scheduleAtFixedRate(() -> {
-            if (running) {
+            
                 printStatistics();
-            }
         }, STATS_INTERVAL, STATS_INTERVAL, TimeUnit.SECONDS);
         
         // 计算发送间隔（毫秒）
@@ -125,10 +125,6 @@ public class SupervisorAgent {
         scheduler.scheduleAtFixedRate(() -> {
             if (!running || System.currentTimeMillis() >= endTime) {
                 running = false;
-                scheduler.shutdown();
-                printSystemInfo("⏹️  测试时间到达，停止发送请求");
-                printFinalStatistics();
-                System.exit(0);
                 return;
             }
             
@@ -142,7 +138,48 @@ public class SupervisorAgent {
         
         // 等待测试完成
         try {
-            Thread.sleep(MAX_TEST_TIME * 1000L + 5000); // 额外等待5秒确保所有响应都收到
+            // 先等待到最大测试时间
+            long currentTime = System.currentTimeMillis();
+            long remainingTime = endTime - currentTime;
+            if (remainingTime > 0) {
+                Thread.sleep(remainingTime);
+            }
+            
+            // 测试时间到达后，检查是否所有请求都已完成
+            long maxWaitTime = 300000; // 300秒
+            long waitStartTime = System.currentTimeMillis();
+            long checkInterval = 1000; // 每秒检查一次
+            
+            while (System.currentTimeMillis() - waitStartTime < maxWaitTime) {
+                // 检查是否还有pending请求
+                boolean hasPending = false;
+                for (Map<String, Long> pendingMap : statistics.requestStartTimes.values()) {
+                    if (pendingMap != null && !pendingMap.isEmpty()) {
+                        hasPending = true;
+                        break;
+                    }
+                }
+                
+                if (!hasPending) {
+                    printSystemInfo("所有请求已完成，提前结束等待");
+                    break;
+                }
+                
+                // 等待一段时间后再次检查
+                Thread.sleep(checkInterval);
+            }
+            
+            // 如果300秒后仍有pending请求，也结束
+            boolean hasPending = false;
+            for (Map<String, Long> pendingMap : statistics.requestStartTimes.values()) {
+                if (pendingMap != null && !pendingMap.isEmpty()) {
+                    hasPending = true;
+                    break;
+                }
+            }
+            if (hasPending) {
+                printSystemInfo("等待时间到达（300秒），仍有未完成请求，结束等待");
+            }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
@@ -157,7 +194,7 @@ public class SupervisorAgent {
      */
     private static void initAgentClients(String agentName, String agentUrls) {
         if (StringUtils.isEmpty(agentName) || StringUtils.isEmpty(agentUrls)) {
-            printSystemError("❌ Agent配置参数错误: " + agentName);
+            printSystemError("Agent配置参数错误: " + agentName);
             return;
         }
         
@@ -165,7 +202,7 @@ public class SupervisorAgent {
         String[] urls = agentUrls.split(",");
         List<Client> clients = new ArrayList<>();
         
-        printSystemInfo("🔧 开始初始化 " + agentName + " 的多副本客户端，总数: " + urls.length);
+        printSystemInfo("开始初始化 " + agentName + " 的多副本客户端，总数: " + urls.length);
         
         for (int i = 0; i < urls.length; i++) {
             String url = urls[i].trim();
@@ -269,21 +306,21 @@ public class SupervisorAgent {
                         .build();
                 
                 clients.add(client);
-                printSystemSuccess("✅ " + agentName + " 客户端初始化成功 [" + i + "]: " + url);
+                printSystemSuccess(agentName + " 客户端初始化成功 [" + i + "]: " + url);
             } catch (Exception e) {
                 log.error("Failed to initialize agent client for {} [{}]: {}", agentName, i, e.getMessage(), e);
-                printSystemError("❌ " + agentName + " 客户端初始化失败 [" + i + "]: " + url + " - " + e.getMessage());
+                printSystemError(agentName + " 客户端初始化失败 [" + i + "]: " + url + " - " + e.getMessage());
             }
         }
         
         if (clients.isEmpty()) {
-            printSystemError("❌ 无法为 " + agentName + " 创建任何有效的客户端");
+            printSystemError("无法为 " + agentName + " 创建任何有效的客户端");
             return;
         }
         
         agentClientListMap.put(agentName, clients);
         agentRoundRobinIndexMap.put(agentName, new AtomicLong(0));
-        printSystemSuccess("✅ " + agentName + " 总计初始化客户端数: " + clients.size());
+        printSystemSuccess(agentName + " 总计初始化客户端数: " + clients.size());
     }
 
     private static String routeToAgent(String userInput) {
@@ -425,14 +462,79 @@ public class SupervisorAgent {
     }
 
     private static void printStatistics() {
-        System.out.println("\n\u001B[33m📊 实时统计信息:\u001B[0m");
+        System.out.println("\n" + "=".repeat(100));
+        System.out.println("\u001B[36m[STATISTIC] 实时统计信息\u001B[0m");
+        System.out.println("=".repeat(100));
         statistics.printStatistics();
+        System.out.println("=".repeat(100) + "\n");
     }
 
     private static void printFinalStatistics() {
-        System.out.println("\n\u001B[33m📊 最终统计信息:\u001B[0m");
-        statistics.printStatistics();
-        statistics.printDetailedStatistics();
+        System.out.println("\n" + "=".repeat(100));
+        System.out.println("\u001B[36m[FINISH] 最终统计信息\u001B[0m");
+        System.out.println("=".repeat(100));
+        
+        // 汇总所有agent的统计数据
+        long totalSuccess = 0;
+        long totalFailure = 0;
+        long totalPending = 0;
+        List<Long> allDurations = new ArrayList<>();
+        
+        java.util.Set<String> allAgentNames = new java.util.HashSet<>(statistics.successCount.keySet());
+        allAgentNames.addAll(statistics.requestStartTimes.keySet());
+        
+        for (String agentName : allAgentNames) {
+            long success = statistics.successCount.getOrDefault(agentName, new AtomicLong(0)).get();
+            long failure = statistics.failureCount.getOrDefault(agentName, new AtomicLong(0)).get();
+            Map<String, Long> pendingRequests = statistics.requestStartTimes.get(agentName);
+            long pendingCount = (pendingRequests != null) ? pendingRequests.size() : 0;
+            
+            totalSuccess += success;
+            totalFailure += failure;
+            totalPending += pendingCount;
+            
+            List<Long> durations = statistics.requestDurations.getOrDefault(agentName, new ArrayList<>());
+            allDurations.addAll(durations);
+        }
+        
+        long totalCompleted = totalSuccess + totalFailure;
+        long totalSent = totalCompleted + totalPending;
+        
+        double triggerSuccessRate = totalSent > 0 ? (double) (totalSent - totalPending - totalFailure) / totalSent * 100 : 0;
+        double completionRate = totalSent > 0 ? (double) totalCompleted / totalSent * 100 : 0;
+        
+        System.out.println(String.format("总触发数: %d", totalSent));
+        System.out.println(String.format("发送失败数: %d", totalFailure));
+        System.out.println(String.format("成功发送数: %d (触发成功率: %.2f%%)", totalSent - totalFailure, triggerSuccessRate));
+        System.out.println(String.format("已完成数: %d (最终完成率: %.2f%%)", totalCompleted, completionRate));
+        System.out.println("-".repeat(100));
+        
+        if (!allDurations.isEmpty()) {
+            Collections.sort(allDurations);
+            long sum = allDurations.stream().mapToLong(Long::longValue).sum();
+            double avg = (double) sum / allDurations.size();
+            long p50 = statistics.calculatePercentile(allDurations, 50);
+            long p90 = statistics.calculatePercentile(allDurations, 90);
+            long p99 = statistics.calculatePercentile(allDurations, 99);
+            
+            System.out.println("\u001B[33m耗时统计 (ms):\u001B[0m");
+            System.out.println(String.format("  样本数: %d", allDurations.size()));
+            System.out.println(String.format("  最小值: %d ms", allDurations.get(0)));
+            System.out.println(String.format("  最大值: %d ms", allDurations.get(allDurations.size() - 1)));
+            System.out.println(String.format("  平均值: %.2f ms", avg));
+            System.out.println(String.format("  P50: %d ms", p50));
+            System.out.println(String.format("  P90: %d ms", p90));
+            System.out.println(String.format("  P99: %d ms", p99));
+        } else {
+            System.out.println("\u001B[33m耗时统计: 无完成数据\u001B[0m");
+        }
+        
+        // 打印pending消息列表
+        if (totalPending > 0) {
+            statistics.printPendingRequests();
+        }
+        
+        System.out.println("=".repeat(100) + "\n");
     }
 
     // 请求统计类
@@ -479,73 +581,40 @@ public class SupervisorAgent {
         }
 
         public void printStatistics() {
-            // 收集所有agent名称（包括有pending请求的）
+            // 汇总所有agent的统计数据
+            long totalSuccess = 0;
+            long totalFailure = 0;
+            long totalPending = 0;
+            List<Long> allDurations = new ArrayList<>();
+            
             java.util.Set<String> allAgentNames = new java.util.HashSet<>(successCount.keySet());
             allAgentNames.addAll(requestStartTimes.keySet());
             
             for (String agentName : allAgentNames) {
                 long success = successCount.getOrDefault(agentName, new AtomicLong(0)).get();
                 long failure = failureCount.getOrDefault(agentName, new AtomicLong(0)).get();
-                long total = success + failure;
-                
-                // 计算pending请求数
                 Map<String, Long> pendingRequests = requestStartTimes.get(agentName);
                 long pendingCount = (pendingRequests != null) ? pendingRequests.size() : 0;
-                long totalSent = total + pendingCount; // 总发送数 = 已完成 + pending
                 
-                double successRate = total > 0 ? (double) success / total * 100 : 0.0;
-                double completionRate = totalSent > 0 ? (double) total / totalSent * 100 : 0.0;
+                totalSuccess += success;
+                totalFailure += failure;
+                totalPending += pendingCount;
                 
                 List<Long> durations = requestDurations.getOrDefault(agentName, new ArrayList<>());
-                double avgDuration = durations.isEmpty() ? 0 : 
-                    durations.stream().mapToLong(Long::longValue).average().orElse(0.0);
-                long minDuration = durations.isEmpty() ? 0 : 
-                    durations.stream().mapToLong(Long::longValue).min().orElse(0);
-                long maxDuration = durations.isEmpty() ? 0 : 
-                    durations.stream().mapToLong(Long::longValue).max().orElse(0);
-                
-                // 计算 P50, P90, P99
-                long p50 = calculatePercentile(durations, 50);
-                long p90 = calculatePercentile(durations, 90);
-                long p99 = calculatePercentile(durations, 99);
-                
-                System.out.println("  " + agentName + ":");
-                System.out.println("    总发送数: " + totalSent);
-                System.out.println("    已完成数: " + total + " (成功率: " + String.format("%.2f%%", completionRate) + ")");
-                System.out.println("    成功数: " + success);
-                System.out.println("    失败数: " + failure);
-                if (pendingCount > 0) {
-                    System.out.println("    ⚠️  Pending数: " + pendingCount);
-                }
-                if (total > 0) {
-                    System.out.println("    成功率: " + String.format("%.2f%%", successRate));
-                    System.out.println("    平均耗时: " + String.format("%.2f", avgDuration) + " ms");
-                    System.out.println("    最小耗时: " + minDuration + " ms");
-                    System.out.println("    最大耗时: " + maxDuration + " ms");
-                    System.out.println("    P50耗时: " + p50 + " ms");
-                    System.out.println("    P90耗时: " + p90 + " ms");
-                    System.out.println("    P99耗时: " + p99 + " ms");
-                }
-            }
-        }
-
-        public void printDetailedStatistics() {
-            System.out.println("\n\u001B[36m📋 每条消息详情:\u001B[0m");
-            for (Map.Entry<String, List<MessageInfo>> entry : messageDetails.entrySet()) {
-                String agentName = entry.getKey();
-                List<MessageInfo> messages = entry.getValue();
-                System.out.println("  " + agentName + " (" + messages.size() + " 条已完成消息):");
-                for (MessageInfo info : messages) {
-                    String status = info.success ? "✅" : "❌";
-                    System.out.println(String.format("    %s [%s] 耗时: %d ms (开始: %d, 结束: %d)", 
-                        status, info.taskId, info.duration, info.startTime, info.endTime));
-                }
+                allDurations.addAll(durations);
             }
             
-            // 打印pending请求详情
-            printPendingRequests();
+            long totalCompleted = totalSuccess + totalFailure;
+            long totalSent = totalCompleted + totalPending;
+            
+            double successRate = totalSent > 0 ? (double) (totalSent - totalPending - totalFailure) / totalSent * 100 : 0;
+            double completionRate = totalSent > 0 ? (double) totalCompleted / totalSent * 100 : 0;
+            
+            System.out.println(String.format("总触发数: %d | 发送失败数: %d | 已完成数: %d | 待完成数: %d", 
+                totalSent, totalFailure, totalCompleted, totalPending));
+            System.out.println(String.format("触发成功率: %.2f%% | 任务完成率: %.2f%%", successRate, completionRate));
         }
-        
+
         /**
          * 打印所有pending状态的请求
          */
@@ -564,7 +633,8 @@ public class SupervisorAgent {
                 return;
             }
             
-            System.out.println("\n\u001B[33m⏳ Pending状态请求详情:\u001B[0m");
+            System.out.println("\n\u001B[33m[PENDING] Pending状态请求列表\u001B[0m");
+            System.out.println("-".repeat(100));
             long currentTime = System.currentTimeMillis();
             
             for (Map.Entry<String, Map<String, Long>> entry : requestStartTimes.entrySet()) {
@@ -586,15 +656,14 @@ public class SupervisorAgent {
                     Long startTime = pendingEntry.getValue();
                     long pendingDuration = currentTime - startTime;
                     
-                    // taskId本身就是messageId的一部分（格式：request-{id}或UUID）
-                    // 直接使用taskId作为标识
-                    System.out.println(String.format("    ⏳ [%s] 已等待: %d ms (开始时间: %d, 等待时长: %.2f秒)", 
+                    System.out.println(String.format("    [%s] 已等待: %d ms (开始时间: %d, 等待时长: %.2f秒)", 
                         taskId, pendingDuration, startTime, pendingDuration / 1000.0));
                 }
             }
+            System.out.println("-".repeat(100));
         }
 
-        private long calculatePercentile(List<Long> durations, int percentile) {
+        public long calculatePercentile(List<Long> durations, int percentile) {
             if (durations == null || durations.isEmpty()) {
                 return 0;
             }

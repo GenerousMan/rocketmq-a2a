@@ -123,42 +123,42 @@ public class SimpleSupervisorAgent implements CommandLineRunner {
     @Override
     public void run(String... args) throws Exception {
         if (!checkConfigParam()) {
-            printSystemError("❌ 配置参数不完整，请检查参数配置");
+            printSystemError("配置参数不完整，请检查参数配置");
             System.exit(1);
         }
         
         int qps = parseQPS(QPS_STR);
         if (qps <= 0) {
-            printSystemError("❌ QPS必须大于0，当前值: " + QPS_STR);
+            printSystemError("QPS必须大于0，当前值: " + QPS_STR);
             System.exit(1);
         }
         
         if (StringUtils.isEmpty(TEST_MESSAGE)) {
-            printSystemError("❌ 请通过 -DtestMessage= 参数指定测试消息");
+            printSystemError("请通过 -DtestMessage= 参数指定测试消息");
             System.exit(1);
         }
         
         final Integer maxTestTimeSeconds = parseMaxTestTime(MAX_TEST_TIME_STR);
         if (maxTestTimeSeconds != null && maxTestTimeSeconds <= 0) {
-            printSystemError("❌ 最大测试时间必须大于0，当前值: " + MAX_TEST_TIME_STR);
+            printSystemError("最大测试时间必须大于0，当前值: " + MAX_TEST_TIME_STR);
             System.exit(1);
         }
         
-        printSystemInfo("🚀 启动简化版SupervisorAgent - HTTP协议批量压测模式");
-        printSystemInfo("📋 测试消息: " + TEST_MESSAGE);
-        printSystemInfo("📋 QPS: " + qps);
-        printSystemInfo("📋 SessionId: " + SESSION_ID);
-        printSystemInfo("📋 回调端口: " + SUPERVISOR_PORT);
+        printSystemInfo("启动简化版SupervisorAgent - HTTP协议批量压测模式");
+        printSystemInfo("测试消息: " + TEST_MESSAGE);
+        printSystemInfo("QPS: " + qps);
+        printSystemInfo("SessionId: " + SESSION_ID);
+        printSystemInfo("回调端口: " + SUPERVISOR_PORT);
         if (maxTestTimeSeconds != null) {
-            printSystemInfo("⏱️  最大测试时间: " + maxTestTimeSeconds + " 秒");
+            printSystemInfo("最大测试时间: " + maxTestTimeSeconds + " 秒");
         }
         
         // 初始化Agent客户端 - 支持多副本
         initAgentUrls(WEATHER_AGENT_NAME, WEATHER_AGENT_URLS);
         initAgentUrls(TRAVEL_AGENT_NAME, TRAVEL_AGENT_URLS);
         
-        printSystemInfo("📤 开始批量发送消息...");
-        printSystemInfo("📊 统计信息将每 " + STATS_INTERVAL_STR + " 秒打印一次");
+        printSystemInfo("开始批量发送消息...");
+        printSystemInfo("统计信息将每 " + STATS_INTERVAL_STR + " 秒打印一次");
         
         // 使用定时器控制QPS发送消息
         ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(2);
@@ -186,18 +186,18 @@ public class SimpleSupervisorAgent implements CommandLineRunner {
         // 最大测试时间控制
         if (maxTestTimeSeconds != null) {
             scheduler.schedule(() -> {
-                printSystemInfo("⏱️  达到最大测试时间 " + maxTestTimeSeconds + " 秒，停止发送新消息...");
+                printSystemInfo("达到最大测试时间 " + maxTestTimeSeconds + " 秒，停止发送新消息...");
                 shouldStopSending = true;
                 sendTask.cancel(false);
                 
-                printSystemInfo("⏳ 等待让现有消息完成...");
+                printSystemInfo("等待让现有消息完成...");
                 long waitStartTime = System.currentTimeMillis();
                 long maxWaitTime = 300 * 1000;
                 
                 while (System.currentTimeMillis() - waitStartTime < maxWaitTime) {
                     long pending = totalTriggered.get() - totalSentFailed.get() - totalCompleted.get();
                     if (pending <= 0) {
-                        printSystemInfo("✅ 所有消息已完成");
+                        printSystemInfo("所有消息已完成");
                         break;
                     }
                     try {
@@ -209,7 +209,7 @@ public class SimpleSupervisorAgent implements CommandLineRunner {
                 }
                 
                 isShuttingDown = true;
-                printSystemInfo("👋 测试结束，打印最终统计信息...");
+                printSystemInfo("测试结束，打印最终统计信息...");
                 printFinalStatistics();
                 
                 scheduler.shutdown();
@@ -220,7 +220,7 @@ public class SimpleSupervisorAgent implements CommandLineRunner {
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             isShuttingDown = true;
             scheduler.shutdown();
-            printSystemInfo("👋 程序退出，打印最终统计信息...");
+            printSystemInfo("程序退出，打印最终统计信息...");
             printFinalStatistics();
         }));
     }
@@ -264,8 +264,6 @@ public class SimpleSupervisorAgent implements CommandLineRunner {
         
         TaskInfo taskInfo = new TaskInfo(messageIdStr, message, targetAgent, triggerTime);
         taskInfoMap.put(messageIdStr, taskInfo);
-        
-        printTaskInitiated(messageIdStr, targetAgent, message, triggerTime);
         
         sendToAgentWithRetry(message, messageIdStr, targetAgent, 0);
     }
@@ -354,11 +352,6 @@ public class SimpleSupervisorAgent implements CommandLineRunner {
         taskInfo.completeTime = completeTime;
         taskInfo.isCompleted = true;
         totalCompleted.incrementAndGet();
-        
-        long duration = taskInfo.getDuration();
-        
-        printTaskCompleted(messageId, taskInfo.targetAgent, taskInfo.message, 
-                taskInfo.taskId, taskInfo.clientIndex, duration, response.getResult());
     }
     
     /**
@@ -382,31 +375,31 @@ public class SimpleSupervisorAgent implements CommandLineRunner {
      */
     private static void initAgentUrls(String agentName, String agentUrls) {
         if (StringUtils.isEmpty(agentName) || StringUtils.isEmpty(agentUrls)) {
-            printSystemError("❌ Agent配置参数错误: " + agentName);
+            printSystemError("Agent配置参数错误: " + agentName);
             return;
         }
         
         String[] urls = agentUrls.split(",");
         List<String> urlList = new ArrayList<>();
         
-        printSystemInfo("🔧 开始初始化 " + agentName + " 的多副本URL，总数: " + urls.length);
+        printSystemInfo("开始初始化 " + agentName + " 的多副本URL，总数: " + urls.length);
         
         for (int i = 0; i < urls.length; i++) {
             String url = urls[i].trim();
             if (!StringUtils.isEmpty(url)) {
                 urlList.add(url);
-                printSystemSuccess("✅ 添加URL [" + i + "]: " + agentName + " - " + url);
+                printSystemSuccess("添加URL [" + i + "]: " + agentName + " - " + url);
             }
         }
         
         if (urlList.isEmpty()) {
-            printSystemError("❌ 无法为 " + agentName + " 添加任何有效的URL");
+            printSystemError("无法为 " + agentName + " 添加任何有效的URL");
             return;
         }
         
         agentUrlListMap.put(agentName, urlList);
         agentRoundRobinIndexMap.put(agentName, new AtomicLong(0));
-        printSystemSuccess("✅ " + agentName + " 总计初始化URL数: " + urlList.size());
+        printSystemSuccess(agentName + " 总计初始化URL数: " + urlList.size());
     }
     
     /**
@@ -422,7 +415,7 @@ public class SimpleSupervisorAgent implements CommandLineRunner {
         double completionRate = triggered > 0 ? (double) completed / triggered * 100 : 0;
         
         System.out.println("\n" + "=".repeat(100));
-        System.out.println("\u001B[36m📊 实时统计信息\u001B[0m");
+        System.out.println("\u001B[36m[STATISTIC] 实时统计信息\u001B[0m");
         System.out.println("=".repeat(100));
         System.out.println(String.format("总触发数: %d | 发送失败数: %d | 已完成数: %d | 待完成数: %d", 
                 triggered, failed, completed, pending));
@@ -438,6 +431,7 @@ public class SimpleSupervisorAgent implements CommandLineRunner {
         long failed = totalSentFailed.get();
         long completed = totalCompleted.get();
         long successfullySent = triggered - failed;
+        long pending = triggered - failed - completed;
         
         double triggerSuccessRate = triggered > 0 ? (double) successfullySent / triggered * 100 : 0;
         double completionRate = successfullySent > 0 ? (double) completed / successfullySent * 100 : 0;
@@ -450,7 +444,7 @@ public class SimpleSupervisorAgent implements CommandLineRunner {
         }
         
         System.out.println("\n" + "=".repeat(100));
-        System.out.println("\u001B[36m📊 最终统计报告\u001B[0m");
+        System.out.println("\u001B[36m[FINISH] 最终统计信息\u001B[0m");
         System.out.println("=".repeat(100));
         System.out.println(String.format("总触发数: %d", triggered));
         System.out.println(String.format("发送失败数: %d", failed));
@@ -478,7 +472,48 @@ public class SimpleSupervisorAgent implements CommandLineRunner {
             System.out.println("\u001B[33m耗时统计: 无完成数据\u001B[0m");
         }
         
+        // 打印pending消息列表
+        if (pending > 0) {
+            printPendingTasks();
+        }
+        
         System.out.println("=".repeat(100) + "\n");
+    }
+    
+    /**
+     * 打印pending任务列表
+     */
+    private static void printPendingTasks() {
+        List<TaskInfo> pendingTasks = new ArrayList<>();
+        for (TaskInfo taskInfo : taskInfoMap.values()) {
+            if (!taskInfo.isCompleted) {
+                pendingTasks.add(taskInfo);
+            }
+        }
+        
+        if (pendingTasks.isEmpty()) {
+            return;
+        }
+        
+        System.out.println("\n\u001B[33m[PENDING] Pending状态请求列表\u001B[0m");
+        System.out.println("-".repeat(100));
+        
+        // 按等待时间排序（最长等待时间排在前面）
+        pendingTasks.sort((t1, t2) -> Long.compare(t2.getPendingDuration(), t1.getPendingDuration()));
+        
+        for (int i = 0; i < pendingTasks.size(); i++) {
+            TaskInfo task = pendingTasks.get(i);
+            long pendingDuration = task.getPendingDuration();
+            String timestamp = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS").format(new java.util.Date(task.triggerTime));
+            
+            String taskIdInfo = task.taskId != null ? task.taskId : "未分配";
+            String clientInfo = task.clientIndex >= 0 ? String.valueOf(task.clientIndex) : "未知";
+            
+            System.out.println(String.format("  [%d] MsgID: %s | TaskID: %s | Agent: %s | Client: %s | 等待时长: %d ms | 发起时间: %s",
+                i + 1, task.messageId, taskIdInfo, task.targetAgent, clientInfo, pendingDuration, timestamp));
+        }
+        
+        System.out.println("-".repeat(100));
     }
     
     private static long getPercentile(List<Long> sortedList, double percentile) {
@@ -536,23 +571,4 @@ public class SimpleSupervisorAgent implements CommandLineRunner {
         log.error(message);
     }
     
-    private static void printTaskInitiated(String messageId, String targetAgent, String message, long triggerTime) {
-        String timestamp = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS").format(new java.util.Date(triggerTime));
-        String logMessage = String.format("\u001B[32m[任务发起]\u001B[0m MsgID: %s | Agent: %s | 消息: %s | 时间: %s", 
-                messageId, targetAgent, message, timestamp);
-        System.out.println(logMessage);
-        log.info("[任务发起] MsgID: {}, Agent: {}, 消息: {}, 时间: {}", messageId, targetAgent, message, timestamp);
-    }
-    
-    private static void printTaskCompleted(String messageId, String targetAgent, String message, 
-                                           String taskId, int clientIndex, long duration, String response) {
-        String timestamp = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS").format(new java.util.Date());
-        String logMessage = String.format(
-                "\u001B[33m[任务完成]\u001B[0m MsgID: %s | TaskID: %s | Agent: %s | URL索引: %d | 消息: %s | 耗时: %dms | 响应: %s | 时间: %s", 
-                messageId, taskId, targetAgent, clientIndex, message, duration, 
-                response != null && response.length() > 50 ? response.substring(0, 50) + "..." : response, timestamp);
-        System.out.println(logMessage);
-        log.info("[任务完成] MsgID: {}, TaskID: {}, Agent: {}, URL索引: {}, 消息: {}, 耗时: {}ms, 响应: {}, 时间: {}", 
-                messageId, taskId, targetAgent, clientIndex, message, duration, response, timestamp);
-    }
 }

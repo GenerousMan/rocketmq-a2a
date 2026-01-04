@@ -36,7 +36,7 @@ import java.util.concurrent.Executors;
 @RequestMapping("/travel")
 public class TravelAgentController {
     private static final Logger log = LoggerFactory.getLogger(TravelAgentController.class);
-    private static final ExecutorService executorService = Executors.newFixedThreadPool(100);
+    private static final ExecutorService executorService = Executors.newFixedThreadPool(50);
     private static final OkHttpClient httpClient = new OkHttpClient();
     private static final MediaType JSON_MEDIA_TYPE = MediaType.parse("application/json; charset=utf-8");
     private static final int PROCESS_TIME_SECONDS = Integer.parseInt(System.getProperty("delaySeconds", "2"));

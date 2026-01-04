@@ -150,6 +150,7 @@ if [ "$PROTOCOL" == "http" ]; then
     JAR_FILE="target/Http${AGENT_NAME}-1.0.0-SNAPSHOT.jar"
 elif [ "$PROTOCOL" == "a2a" ]; then
     JAR_FILE="target/quarkus-app/quarkus-run.jar"
+    AGENT_JAR_NAME="A2A${AGENT_NAME}"
 else
     JAR_FILE="target/quarkus-app/quarkus-run.jar"
 fi
@@ -214,8 +215,17 @@ case "$PROTOCOL" in
         ;;
     
     a2a)
-        # A2A协议启动逻辑（使用Quarkus）
+        # A2A协议启动逻辑（使用Quarkus，纯A2A协议，不需要RocketMQ配置）
         JVM_OPTS="-Dquarkus.http.port=${PORT}"
+        JVM_OPTS="${JVM_OPTS} -DagentUrl=http://localhost:${PORT}"
+        
+        # 可选配置：延迟秒数和固定响应内容
+        if [ -n "${A2A_DELAY_SECONDS:-}" ]; then
+            JVM_OPTS="${JVM_OPTS} -DdelaySeconds=${A2A_DELAY_SECONDS}"
+        fi
+        if [ -n "${A2A_FIXED_RESPONSE:-}" ]; then
+            JVM_OPTS="${JVM_OPTS} -DfixedResponse=\"${A2A_FIXED_RESPONSE}\""
+        fi
         
         # 启动Quarkus应用
         nohup java ${JVM_OPTS} -jar target/quarkus-app/quarkus-run.jar > "${LOG_FILE}" 2>&1 &

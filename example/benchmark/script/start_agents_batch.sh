@@ -21,14 +21,15 @@ usage() {
     echo "Usage: $0 <protocol> <agent_type> <start_port> <count>"
     echo ""
     echo "参数说明:"
-    echo "  protocol    - 协议类型 (目前仅支持: rocketmq-a2a)"
+    echo "  protocol    - 协议类型 (rocketmq-a2a, http, a2a)"
     echo "  agent_type  - Agent类型 (weather 或 travel)"
     echo "  start_port  - 起始端口号"
     echo "  count       - 启动Agent数量"
     echo ""
     echo "示例:"
     echo "  $0 rocketmq-a2a weather 8080 3  # 在端口 8080, 8081, 8082 启动3个WeatherAgent"
-    echo "  $0 rocketmq-a2a travel 8888 2   # 在端口 8888, 8889 启动2个TravelAgent"
+    echo "  $0 a2a weather 8080 2            # 在端口 8080, 8081 启动2个WeatherAgent (A2A协议)"
+    echo "  $0 a2a travel 8888 2            # 在端口 8888, 8889 启动2个TravelAgent (A2A协议)"
     exit 1
 }
 
@@ -102,19 +103,39 @@ if [ ${SUCCESS_COUNT} -gt 0 ]; then
     source "${SCRIPT_DIR}/env.sh" > /dev/null 2>&1
     
     if [ "$AGENT_TYPE" == "weather" ]; then
-        AGENT_DIR="${BENCHMARK_ROOT}/rocketmq-a2a/WeatherAgent"
+        if [ "$PROTOCOL" == "http" ]; then
+            AGENT_DIR="${BENCHMARK_ROOT}/http/WeatherAgent"
+        elif [ "$PROTOCOL" == "a2a" ]; then
+            AGENT_DIR="${BENCHMARK_ROOT}/a2a/WeatherAgent"
+        else
+            AGENT_DIR="${BENCHMARK_ROOT}/rocketmq-a2a/WeatherAgent"
+        fi
     elif [ "$AGENT_TYPE" == "travel" ]; then
-        AGENT_DIR="${BENCHMARK_ROOT}/rocketmq-a2a/TravelAgent"
+        if [ "$PROTOCOL" == "http" ]; then
+            AGENT_DIR="${BENCHMARK_ROOT}/http/TravelAgent"
+        elif [ "$PROTOCOL" == "a2a" ]; then
+            AGENT_DIR="${BENCHMARK_ROOT}/a2a/TravelAgent"
+        else
+            AGENT_DIR="${BENCHMARK_ROOT}/rocketmq-a2a/TravelAgent"
+        fi
     fi
     
     echo "   tail -f ${AGENT_DIR}/logs/${AGENT_TYPE}_*.log"
     echo ""
     echo "💡 批量停止服务:"
-    echo "   pkill -f 'quarkus.http.port=${START_PORT}'"
-    for ((i=1; i<COUNT; i++)); do
-        PORT=$((START_PORT + i))
-        echo "   pkill -f 'quarkus.http.port=${PORT}'"
-    done
+    if [ "$PROTOCOL" == "http" ]; then
+        echo "   # HTTP协议使用Spring Boot，通过端口停止"
+        for ((i=0; i<COUNT; i++)); do
+            PORT=$((START_PORT + i))
+            echo "   ${SCRIPT_DIR}/stop_agent.sh ${PORT}"
+        done
+    else
+        echo "   # Quarkus应用通过端口停止"
+        for ((i=0; i<COUNT; i++)); do
+            PORT=$((START_PORT + i))
+            echo "   ${SCRIPT_DIR}/stop_agent.sh ${PORT}"
+        done
+    fi
 fi
 
 exit ${FAIL_COUNT}

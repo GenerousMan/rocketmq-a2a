@@ -479,11 +479,22 @@ public class SupervisorAgent {
         }
 
         public void printStatistics() {
-            for (String agentName : new java.util.HashSet<>(successCount.keySet())) {
+            // 收集所有agent名称（包括有pending请求的）
+            java.util.Set<String> allAgentNames = new java.util.HashSet<>(successCount.keySet());
+            allAgentNames.addAll(requestStartTimes.keySet());
+            
+            for (String agentName : allAgentNames) {
                 long success = successCount.getOrDefault(agentName, new AtomicLong(0)).get();
                 long failure = failureCount.getOrDefault(agentName, new AtomicLong(0)).get();
                 long total = success + failure;
+                
+                // 计算pending请求数
+                Map<String, Long> pendingRequests = requestStartTimes.get(agentName);
+                long pendingCount = (pendingRequests != null) ? pendingRequests.size() : 0;
+                long totalSent = total + pendingCount; // 总发送数 = 已完成 + pending
+                
                 double successRate = total > 0 ? (double) success / total * 100 : 0.0;
+                double completionRate = totalSent > 0 ? (double) total / totalSent * 100 : 0.0;
                 
                 List<Long> durations = requestDurations.getOrDefault(agentName, new ArrayList<>());
                 double avgDuration = durations.isEmpty() ? 0 : 
@@ -499,16 +510,22 @@ public class SupervisorAgent {
                 long p99 = calculatePercentile(durations, 99);
                 
                 System.out.println("  " + agentName + ":");
-                System.out.println("    总请求数: " + total);
+                System.out.println("    总发送数: " + totalSent);
+                System.out.println("    已完成数: " + total + " (成功率: " + String.format("%.2f%%", completionRate) + ")");
                 System.out.println("    成功数: " + success);
                 System.out.println("    失败数: " + failure);
-                System.out.println("    成功率: " + String.format("%.2f%%", successRate));
-                System.out.println("    平均耗时: " + String.format("%.2f", avgDuration) + " ms");
-                System.out.println("    最小耗时: " + minDuration + " ms");
-                System.out.println("    最大耗时: " + maxDuration + " ms");
-                System.out.println("    P50耗时: " + p50 + " ms");
-                System.out.println("    P90耗时: " + p90 + " ms");
-                System.out.println("    P99耗时: " + p99 + " ms");
+                if (pendingCount > 0) {
+                    System.out.println("    ⚠️  Pending数: " + pendingCount);
+                }
+                if (total > 0) {
+                    System.out.println("    成功率: " + String.format("%.2f%%", successRate));
+                    System.out.println("    平均耗时: " + String.format("%.2f", avgDuration) + " ms");
+                    System.out.println("    最小耗时: " + minDuration + " ms");
+                    System.out.println("    最大耗时: " + maxDuration + " ms");
+                    System.out.println("    P50耗时: " + p50 + " ms");
+                    System.out.println("    P90耗时: " + p90 + " ms");
+                    System.out.println("    P99耗时: " + p99 + " ms");
+                }
             }
         }
 
@@ -517,11 +534,62 @@ public class SupervisorAgent {
             for (Map.Entry<String, List<MessageInfo>> entry : messageDetails.entrySet()) {
                 String agentName = entry.getKey();
                 List<MessageInfo> messages = entry.getValue();
-                System.out.println("  " + agentName + " (" + messages.size() + " 条消息):");
+                System.out.println("  " + agentName + " (" + messages.size() + " 条已完成消息):");
                 for (MessageInfo info : messages) {
                     String status = info.success ? "✅" : "❌";
                     System.out.println(String.format("    %s [%s] 耗时: %d ms (开始: %d, 结束: %d)", 
                         status, info.taskId, info.duration, info.startTime, info.endTime));
+                }
+            }
+            
+            // 打印pending请求详情
+            printPendingRequests();
+        }
+        
+        /**
+         * 打印所有pending状态的请求
+         */
+        public void printPendingRequests() {
+            boolean hasPending = false;
+            for (Map.Entry<String, Map<String, Long>> entry : requestStartTimes.entrySet()) {
+                String agentName = entry.getKey();
+                Map<String, Long> pendingMap = entry.getValue();
+                if (pendingMap != null && !pendingMap.isEmpty()) {
+                    hasPending = true;
+                    break;
+                }
+            }
+            
+            if (!hasPending) {
+                return;
+            }
+            
+            System.out.println("\n\u001B[33m⏳ Pending状态请求详情:\u001B[0m");
+            long currentTime = System.currentTimeMillis();
+            
+            for (Map.Entry<String, Map<String, Long>> entry : requestStartTimes.entrySet()) {
+                String agentName = entry.getKey();
+                Map<String, Long> pendingMap = entry.getValue();
+                
+                if (pendingMap == null || pendingMap.isEmpty()) {
+                    continue;
+                }
+                
+                System.out.println("  " + agentName + " (" + pendingMap.size() + " 条pending请求):");
+                
+                // 按开始时间排序
+                List<Map.Entry<String, Long>> sortedPending = new ArrayList<>(pendingMap.entrySet());
+                sortedPending.sort(Map.Entry.comparingByValue());
+                
+                for (Map.Entry<String, Long> pendingEntry : sortedPending) {
+                    String taskId = pendingEntry.getKey();
+                    Long startTime = pendingEntry.getValue();
+                    long pendingDuration = currentTime - startTime;
+                    
+                    // taskId本身就是messageId的一部分（格式：request-{id}或UUID）
+                    // 直接使用taskId作为标识
+                    System.out.println(String.format("    ⏳ [%s] 已等待: %d ms (开始时间: %d, 等待时长: %.2f秒)", 
+                        taskId, pendingDuration, startTime, pendingDuration / 1000.0));
                 }
             }
         }
